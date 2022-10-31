@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from src_core.classes.JobParams import JobParams
-from src_core.classes.PipeData import PipeData
+from . import JobParams
+from . import PipeData
 
 
 class Job:

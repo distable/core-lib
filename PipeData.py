@@ -1,9 +1,8 @@
-import sys
 from pathlib import Path
 
 from PIL import Image
 
-from src_core.classes.printlib import printerr
+from .printlib import printerr
 
 
 class PipeData:
@@ -20,8 +19,8 @@ class PipeData:
         if isinstance(self.image, Image.Image):
             self.image.save(path)
 
-            from image import DrawImage
-            image = DrawImage.from_file(path)
-            image.draw_image()
+            # from image import DrawImage
+            # image = DrawImage.from_file(path)
+            # image.draw_image()
         else:
-            print(f"Cannot save {self.image} to {path}", file=sys.stderr)
+            printerr(f"Cannot save {self.image} to {path}")

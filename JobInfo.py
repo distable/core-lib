@@ -1,9 +1,9 @@
 import inspect
 import types
 
-from src_core.classes import JobParams, paths
-from src_core.classes.paths import split_jid
-from src_core.classes.printlib import printerr
+from . import JobParams, paths
+from .paths import split_jid
+from .printlib import printerr
 
 
 class JobInfo:
