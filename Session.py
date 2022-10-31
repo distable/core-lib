@@ -3,9 +3,9 @@ from pathlib import Path
 
 from PIL.Image import Image
 
-from src_core import paths
+from src_core.classes import paths
 from src_core.classes.PipeData import PipeData
-from src_core.paths import get_next_leadnum
+from src_core.classes.paths import get_next_leadnum
 from src_core.logs import logsession, logsession_err
 
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src_core import paths
+from src_core.classes import paths
 from src_core.classes.JobInfo import JobInfo
 from src_core.classes.PlugjobDeco import PlugjobDeco
 
