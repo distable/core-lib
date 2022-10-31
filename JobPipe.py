@@ -1,4 +1,4 @@
-from src_core.classes.PipeData import PipeData
+from . import PipeData
 
 
 class JobPipe:

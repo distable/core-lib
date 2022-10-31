@@ -1,9 +1,9 @@
 import sys
 import traceback
 
-import user_conf
+# import user_conf
 
-enable_timing = True
+print_timing = True
 last_time = False
 
 
@@ -30,13 +30,13 @@ def run(code, task):
 
 def make_print(module_name):
     def ret(msg, *args, **kwargs):
-        if not enable_timing:
+        if not print_timing:
             print(f"[{module_name}] {msg}", *args, **kwargs)
         else:
             # Print the elapsed time since the last call to this function
             import time
             global last_time
-            if last_time and user_conf.print_timing:
+            if last_time and print_timing:
                 print(f"[{module_name}] ({time.time() - last_time:.2f}s) {msg}", *args, **kwargs)
             else:
                 print(f"[{module_name}] {msg}", *args, **kwargs)
