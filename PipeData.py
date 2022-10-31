@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -23,4 +24,4 @@ class PipeData:
             image = DrawImage.from_file(path)
             image.draw_image()
         else:
-            printerr(f"Cannot save {self.image} to {path}")
+            print(f"Cannot save {self.image} to {path}", file=sys.stderr)

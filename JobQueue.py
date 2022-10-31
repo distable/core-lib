@@ -1,4 +1,4 @@
-from src_core.classes.Job import Job
+from . import Job
 
 
 class JobQueue:

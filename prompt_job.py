@@ -1,4 +1,4 @@
-from src_core.classes.JobParams import JobParams
+from . import JobParams
 
 
 class prompt_job(JobParams):
