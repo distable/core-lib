@@ -3,7 +3,7 @@ from typing import List
 
 from PIL import Image
 
-from src_core.classes.printlib import printerr
+from .printlib import printerr
 
 
 class PipeData:
@@ -59,5 +59,4 @@ class PipeData:
             return cls(image=Image.open(path))
         else:
             printerr(f"Cannot load {path}")
-
 
