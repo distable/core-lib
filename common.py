@@ -1,11 +1,41 @@
 import os
 import signal
+from typing import Callable
+
+from jsonic import deserialize, serialize
+
+
+def wserialize(obj):
+    """
+    Weird serialization
+    Clears the classlib prefix from the class name.
+    """
+    ret = serialize(obj, string_output=True)
+    ret.replace('src_core.classes' '__CLASSLIB__')
+
+
+def wdeserialize(s, classlib: str):
+    """
+    Weird serialization
+    jsonic serializes class names, but the full path won't be the same
+    across every installation. This function replaces the class name with
+    the proper prefix.
+    """
+    s = s.replace('__CLASSLIB__', classlib)
+    ret = deserialize(s)
+
+    return ret
 
 
 def extract_dict(obj, *names):
-    return {x: getattr(obj, x) for x in names}
-
-
+    d = {}
+    for x in names:
+        v = getattr(obj, x)
+        if isinstance(v, Callable):
+            d[x] = v()
+        else:
+            d[x] = v
+    return d
 
 
 def setup_ctrl_c(func=None):

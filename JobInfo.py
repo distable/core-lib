@@ -12,7 +12,7 @@ class JobInfo:
     def __init__(self, jid=None, jfunc: Callable = None, plugin=None, key=None, alias=False):
         self.jid = jid
         self.func: Callable = jfunc
-        self.plug = plugin
+        self.plugid = plugin.id
         self.alias = alias
         self.key = key
 
@@ -51,8 +51,8 @@ class JobInfo:
         munch = munch if munch else dict()
 
         jplug, jname = split_jid(self.jid, True)
-        if self.plug.id in munch:
-            v = munch[self.plug.id]
+        if self.plugid in munch:
+            v = munch[self.plugid]
             if jname in v:
                 return v[jname]
         return dict()

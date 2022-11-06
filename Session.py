@@ -19,7 +19,7 @@ class Session:
 
         if name is not None:
             self.name = name
-            self.path = paths.sessions / name
+            self.path = (paths.sessions / name).as_posix()
         elif path is not None:
             self.path = Path(path)
             self.name = Path(path).stem
@@ -28,20 +28,20 @@ class Session:
             logsession_err("Cannot create session! No name or path given!")
             return
 
-        if self.path.exists():
+        if Path(self.path).exists():
             self.load_if_exists()
         else:
             logsession("New session:", self.name)
 
     @staticmethod
-    def now(**kwargs):
+    def now(prefix='', **kwargs):
         """
         Returns: A new session which is timestamped to now
         """
-        return Session(paths.format_session_id(datetime.now().strftime(paths.session_timestamp_format), **kwargs))
+        return Session(prefix + paths.format_session_id(datetime.now().strftime(paths.session_timestamp_format), **kwargs))
 
     @staticmethod
-    def now_or_recent(recent_window=60*5, **kwargs):
+    def now_or_recent(recent_window=60 * 5, **kwargs):
         """
         Returns: A new session which is timestamped
         """
@@ -63,7 +63,7 @@ class Session:
             logsession(f"Load session {self.name}")
             # TODO load a session metadata file
 
-    def save_next(self, dat:PipeData=None):
+    def save_next(self, dat: PipeData = None):
         if dat is None:
             dat = self.context
 
@@ -76,7 +76,7 @@ class Session:
             p = p.relative_to(self.path)
             self.context.file = p
 
-    def save(self, dat:PipeData, path):
+    def save(self, dat: PipeData, path):
         dat.save(path)
 
     def add_job(self, j):
@@ -85,14 +85,14 @@ class Session:
     def rem_job(self, j):
         self.jobs.remove(j)
 
-    def add_kwargs(self, ifo:JobInfo, kwargs):
+    def add_kwargs(self, ifo: JobInfo, kwargs):
         key = ifo.get_groupclass()
         if key in self.args:
             self.args[key].update(kwargs)
         else:
             self.args[key] = {**kwargs}
 
-    def get_kwargs(self, ifo:JobInfo):
+    def get_kwargs(self, ifo: JobInfo):
         key = ifo.get_groupclass()
         if key in self.args:
             return self.args[key]

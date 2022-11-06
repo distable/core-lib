@@ -12,10 +12,10 @@ class Plugin:
 
         # Determine our ID and directory
         if dirpath is not None and id is None:
-            self.dir = Path(dirpath)
-            self.id = id or Path(self.dir).stem
+            self._dir = Path(dirpath)
+            self.id = id or Path(self._dir).stem
         elif id is not None:
-            self.dir = None
+            self._dir = None
             self.id = id
         else:
             raise ValueError("Either dirpath or id must be specified")
