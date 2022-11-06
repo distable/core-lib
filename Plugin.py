@@ -1,13 +1,14 @@
 from pathlib import Path
 
 from . import paths
-from . import JobInfo
-from . import PlugjobDeco
+from .JobInfo import JobInfo
+from .PlugjobDeco import PlugjobDeco
 
 
 class Plugin:
     def __init__(self, dirpath: Path = None, id: str = None):
         self.jobs = []
+        self.loaded = False
 
         # Determine our ID and directory
         if dirpath is not None and id is None:
@@ -26,19 +27,19 @@ class Plugin:
 
         # Discover PlugjobDecos to register our jobs
         for attr in dir(self):
-            token = getattr(self, attr)
-            if isinstance(token, PlugjobDeco):
+            deco = getattr(self, attr)
+            if isinstance(deco, PlugjobDeco):
                 jname = attr
-                jfunc = token.func
+                jfunc = deco.func
 
                 # Register job
                 # mprint(f"Registering {attr} job")
-                self.jobs.append(JobInfo(f'{self.id}.{jname}', jfunc, self))
+                self.jobs.append(JobInfo(f'{self.id}.{jname}', jfunc, plugin=self, key=deco.key))
 
                 # Register aliases
-                # mprint(f"Registering aliases: {token.aliases}")
-                if token.aliases is not None:
-                    for alias in token.aliases:
+                # mprint(f"Registering aliases: {deco.aliases}")
+                if deco.aliases is not None:
+                    for alias in deco.aliases:
                         self.jobs.append(JobInfo(alias, jfunc, self, alias=True))
 
                 # Revert our function to the original decorated func
@@ -91,5 +92,11 @@ class Plugin:
         """
         Load the models and other things into memory, such that the plugin is ready for processng.
         If enabled on startup in user_conf, this runs right after the UI is launched.
+        """
+        pass
+
+    def unload(self):
+        """
+        Unload everything from memory.
         """
         pass

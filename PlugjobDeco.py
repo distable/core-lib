@@ -5,6 +5,7 @@ class PlugjobDeco:
     with an actual function.
     """
 
-    def __init__(self, func, aliases=None):
+    def __init__(self, func, group=None, aliases=None):
         self.func = func
         self.aliases = aliases
+        self.key = group

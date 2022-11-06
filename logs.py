@@ -8,3 +8,8 @@ logplugin = printlib.make_print("plugin")
 logplugin_err = printlib.make_printerr("plugin")
 logserver = printlib.make_print("server")
 logserver_err = printlib.make_printerr("server")
+logjob = printlib.make_print("jobs")
+logjob_err = printlib.make_printerr("jobs")
+logwizard = printlib.make_print("wizard")
+logwizard_err = printlib.make_printerr("wizard")
+

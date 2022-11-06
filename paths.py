@@ -1,7 +1,13 @@
 import re
 from pathlib import Path
 
-root = Path(__file__).resolve().parent.parent
+root = Path(__file__).resolve().parent.parent.parent
+
+# Code for the core
+code_core = root / 'src_core' # conflict with package names, must be prefixed differently here
+
+# Downloaded plugin source code
+code_plugins = root / 'src_plugins' # conflict with package names, must be prefixed differently here
 
 # Contains the user's downloaded plugins (cloned from github)
 plugins = root / 'src_plugins'
@@ -22,6 +28,8 @@ plug_repos = root / 'plug-repos'
 #   - Started manually by the user
 sessions = root / 'sessions'
 
+session_timestamp_format = '%Y-%m-%d_%Hh%M'
+
 plug_res.mkdir(exist_ok=True)
 plug_logs.mkdir(exist_ok=True)
 plug_repos.mkdir(exist_ok=True)
@@ -30,6 +38,7 @@ sessions.mkdir(exist_ok=True)
 # These suffixes will be stripped from the plugin IDs for simplicity
 plugin_suffixes = ['_plugin']
 
+
 # sys.path.insert(0, root.as_posix())
 
 
@@ -37,7 +46,7 @@ def format_session_id(name, num=None):
     if num is None:
         num = get_next_leadnum(directory=sessions)
 
-    return f"{num:0>3}_{name}"
+    return f"{name}"
 
 
 def get_next_leadnum(iterator=None, separator='_', directory=None):
@@ -100,3 +109,4 @@ def split_jid(jid, allow_jobonly=False) -> tuple[str:None, str]:
         return None, jid
 
     raise ValueError(f"Invalid plugin jid: {jid}")
+

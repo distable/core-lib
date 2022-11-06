@@ -1,4 +1,4 @@
-from . import PipeData
+from .PipeData import PipeData
 
 
 class JobPipe:

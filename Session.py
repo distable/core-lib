@@ -4,15 +4,18 @@ from pathlib import Path
 from PIL.Image import Image
 
 from . import paths
-from . import PipeData
+from .JobInfo import JobInfo
+from .PipeData import PipeData
 from .paths import get_next_leadnum
 from .logs import logsession, logsession_err
 
 
 class Session:
-    def __init__(self, name=None, path: Path | str = None):
+    def __init__(self, name=None, path: Path | str = None, **kwargs):
         self.context = PipeData()
         self.jobs = []
+        self.args = dict()
+        self.autosave = True
 
         if name is not None:
             self.name = name
@@ -25,43 +28,56 @@ class Session:
             logsession_err("Cannot create session! No name or path given!")
             return
 
-        if not self.path.exists():
-            logsession("New session:", self.name)
-        else:
+        if self.path.exists():
             self.load_if_exists()
+        else:
+            logsession("New session:", self.name)
 
     @staticmethod
-    def timestamped_now():
+    def now(**kwargs):
         """
-        Returns: A new session which is timestamped, e.g.
+        Returns: A new session which is timestamped to now
         """
-        return Session(paths.format_session_id(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
+        return Session(paths.format_session_id(datetime.now().strftime(paths.session_timestamp_format), **kwargs))
 
-    def create_if_missing(self):
-        if not self.path.exists():
-            self.path.mkdir(parents=True)
+    @staticmethod
+    def now_or_recent(recent_window=60*5, **kwargs):
+        """
+        Returns: A new session which is timestamped
+        """
+        now = datetime.now()
+
+        # Check with pathlib and lstat
+        for p in paths.sessions.iterdir():
+            if p.is_dir():
+                if (now - datetime.fromtimestamp(p.stat().st_mtime)).seconds < recent_window:
+                    return Session(path=p, **kwargs)
+
+        return Session.now()
 
     def load_if_exists(self):
         if self.path.exists():
-            logsession(f"Loading session: {self.name}")
+            # Set the context to the most recent file in the session directory
+            recent = self.path / max(self.path.iterdir(), key=lambda p: p.stat().st_mtime)
+            self.context = PipeData.file(recent)
+            logsession(f"Load session {self.name}")
             # TODO load a session metadata file
 
-    def save_next(self, dat):
+    def save_next(self, dat:PipeData=None):
+        if dat is None:
+            dat = self.context
+
         path = self.path / str(get_next_leadnum(self.path, ''))
         self.save(dat, path)
 
-    def save(self, dat, path):
-        if isinstance(dat, list):
-            for d in dat:
-                self.save_next(d)
-        elif isinstance(dat, Image):
-            self.create_if_missing()
-            dat.save(path.with_suffix(".png"))
-            print(f"Saved pil/image to {path.with_suffix('.png')}")
-        elif dat is None:
-            pass
-        else:
-            logsession_err("Cannot save! unknown data type:", type(dat))
+        if self.context.file is str:
+            p = Path(self.path / self.context.file)
+            p = p.with_name(get_next_leadnum(Path(self.context.file).stem))
+            p = p.relative_to(self.path)
+            self.context.file = p
+
+    def save(self, dat:PipeData, path):
+        dat.save(path)
 
     def add_job(self, j):
         self.jobs.append(j)
@@ -69,7 +85,21 @@ class Session:
     def rem_job(self, j):
         self.jobs.remove(j)
 
-    # def run(self, query: JobParams | str | None = None, **kwargs):
+    def add_kwargs(self, ifo:JobInfo, kwargs):
+        key = ifo.get_groupclass()
+        if key in self.args:
+            self.args[key].update(kwargs)
+        else:
+            self.args[key] = {**kwargs}
+
+    def get_kwargs(self, ifo:JobInfo):
+        key = ifo.get_groupclass()
+        if key in self.args:
+            return self.args[key]
+        else:
+            return {}
+
+    # def run(self, query: JobArgs | str | None = None, **kwargs):
     #     """
     #     Run a job in the current session context, meaning the output JobState data will be saved to disk
     #     """

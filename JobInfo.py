@@ -1,24 +1,27 @@
 import inspect
 import types
+from typing import Callable
 
-from src_core.classes import JobParams, paths
-from src_core.classes.paths import split_jid
-from src_core.classes.printlib import printerr
+from . import paths
+from .paths import split_jid
+from .JobArgs import JobArgs
+from .printlib import printerr
 
 
 class JobInfo:
-    def __init__(self, jid=None, jfunc=None, jplug=None, alias=False):
+    def __init__(self, jid=None, jfunc: Callable = None, plugin=None, key=None, alias=False):
         self.jid = jid
-        self.func = jfunc
-        self.plug = jplug
+        self.func: Callable = jfunc
+        self.plug = plugin
         self.alias = alias
+        self.key = key
 
     @property
     def short_jid(self):
-        plug,job = paths.split_jid(self.jid, True)
+        plug, job = paths.split_jid(self.jid, True)
         return job
 
-    def get_paramclass(self):
+    def get_paramclass(self, directly_under_job=False):
         """
         Get the parameters for a job query
         """
@@ -26,16 +29,27 @@ class JobInfo:
             if '_empty' not in str(p.annotation):
                 ptype = type(p.annotation)
                 if ptype == type:
-                    return p.annotation
+                    if not directly_under_job:
+                        return p.annotation
+                    else:
+                        ancestry = inspect.getmro(p.annotation)
+                        # Find the first class that is not JobArgs
+                        for c in reversed(ancestry):
+                            if c == JobArgs: continue
+                            if c == object: continue
+                            return c
+
                 elif ptype == types.ModuleType:
                     printerr("Make sure to use the type, not the module, when annotating jobparameters with @plugjob.")
                 else:
                     printerr(f"Unknown jobparameter type: {ptype}")
 
-    def get_jobentry(self, munch):
+    def find_entry(self, munch):
         """
         Find the entry for a plugin in a list of tuple (id, dict) where id is 'plug.job' or 'job'
         """
+        munch = munch if munch else dict()
+
         jplug, jname = split_jid(self.jid, True)
         if self.plug.id in munch:
             v = munch[self.plug.id]
@@ -43,13 +57,13 @@ class JobInfo:
                 return v[jname]
         return dict()
 
-    def new_params(self, kwargs) -> JobParams:
+    def new_args(self, kwargs) -> JobArgs:
         """
         Instantiate job parameters for a matching job.
         Args:
-            kwargs: The parameters for the JobParams' constructor.
+            kwargs: The parameters for the JobArgs' constructor.
 
-        Returns: A new JobParams of the matching type.
+        Returns: A new JobArgs of the matching type.
         """
 
         # Bake the job parameters
@@ -58,3 +72,10 @@ class JobInfo:
                 kwargs[k] = v()
 
         return self.get_paramclass()(**kwargs)
+
+    def get_groupclass(self):
+        if self.key is not None:
+            return self.key
+        else:
+            return self.get_paramclass()
+

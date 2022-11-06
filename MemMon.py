@@ -6,7 +6,7 @@ import torch
 
 
 class MemMon(threading.Thread):
-    def __init__(self, name, device, poll_rate):
+    def __init__(self, name, device, poll_rate=1):
         threading.Thread.__init__(self)
         self.name = name
         self.device = device
@@ -15,6 +15,7 @@ class MemMon(threading.Thread):
         self.run_flag = threading.Event()
         self.data = defaultdict(int)
         self.poll_rate = poll_rate
+        self.disabled = False
 
         try:
             torch.cuda.mem_get_info()
