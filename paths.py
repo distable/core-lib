@@ -4,6 +4,9 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very robust
 
+scripts_name = 'scripts'
+userconf_name = 'user_conf.py'
+
 # Code for the core
 code_core = root / 'src_core'  # conflict with package names, must be prefixed differently here
 
