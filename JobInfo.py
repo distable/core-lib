@@ -9,12 +9,12 @@ from .printlib import printerr
 
 
 class JobInfo:
-    def __init__(self, jid=None, jfunc: Callable = None, plugin=None, key=None, alias=False):
+    def __init__(self, jid=None, jfunc: Callable = None, plugin=None, key=None, is_alias=False):
         self.jid = jid
         self.func: Callable = jfunc
         self.plugid = plugin.id
-        self.alias = alias
         self.key = key
+        self.is_alias = is_alias
 
     @property
     def short_jid(self):
@@ -79,3 +79,6 @@ class JobInfo:
         else:
             return self.get_paramclass()
 
+
+    def __repr__(self):
+        return f"JobInfo({self.jid}, {self.plugid}->{self.func},alias={self.is_alias})"

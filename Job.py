@@ -28,18 +28,18 @@ class Job:
         # Job definition
         self.uid = str(uuid.uuid4())  # Unique ID of the job
         self.jid = jid  # Jid to execute
-        self.sessionid = None
+        self.session = None
         self.aborting: bool = False
         self.timestamp_post: str = datetime.now().isoformat()
         self.timestamp_run: str = None
         self.args: JobArgs = args
-        self.input = PipeData()
+        self.ctx = PipeData()
         self.output = PipeData()
         self.state = JobState()
         self.queued = False
         self.running = False
         self.thread = None
-        self.on_output: None = None  # Handle the job output
+        # self.on_output: None = None  # Handle the job output
 
     @property
     def done(self):

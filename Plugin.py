@@ -40,10 +40,17 @@ class Plugin:
                 # mprint(f"Registering aliases: {deco.aliases}")
                 if deco.aliases is not None:
                     for alias in deco.aliases:
-                        self.jobs.append(JobInfo(alias, jfunc, self, alias=True))
+                        self.jobs.append(JobInfo(alias, jfunc, self, is_alias=True))
 
                 # Revert our function to the original decorated func
                 setattr(self, attr, jfunc)
+
+    @property
+    def short_pid(self):
+        """
+        The short plugin ID.
+        """
+        return paths.short_pid(self.id)
 
     def info(self):
         """
@@ -66,7 +73,7 @@ class Plugin:
         """
         return paths.plug_logs / self.id / join
 
-    def repos(self, join):
+    def repo(self, join):
         """
         Returns: The git repo dependencies directory for this plugin
         """

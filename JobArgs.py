@@ -1,13 +1,18 @@
-from src_core.classes import Job, PipeData
-
-
 class JobArgs:
     """
     Parameters for a job
     """
 
-    def __init__(self, __getdefaults__=False, **kwargs):
+    def __init__(self,
+                 prompt: str = None,
+                 p: str = None,
+                 w: int = None,
+                 h: int = None,
+                 __getdefaults__=False, **kwargs):
         self.__dict__.update(kwargs)
+        self.prompt = p or prompt or ''
+        self.w = int(w) if w else None
+        self.h = int(h) if h else None
 
         self.job_repeats = 1
         if 'n' in kwargs: self.job_repeats = int(kwargs['n'])
@@ -16,8 +21,9 @@ class JobArgs:
         if not __getdefaults__:
             self.defaults = self.__class__(__getdefaults__=True)
 
-        self.job:Job = None
-        self.input:PipeData = None
+        self.job: 'Job' = None
+        self.ctx: 'PipeData' = None
+        self.session: 'Session' = None
 
     def __str__(self):
         # Print the values that have changed from the defaults

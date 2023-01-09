@@ -1,9 +1,8 @@
 import os
 import signal
+from pathlib import Path
 from typing import Callable
-
-from jsonic import deserialize, serialize
-
+from jsonic import deserialize, serialize, jsonic_serializer, jsonic_deserializer
 
 def wserialize(obj):
     """
@@ -11,7 +10,9 @@ def wserialize(obj):
     Clears the classlib prefix from the class name.
     """
     ret = serialize(obj, string_output=True)
-    ret.replace('src_core.classes' '__CLASSLIB__')
+    ret = ret.replace('src_core.classes', '__CLASSLIB__')
+
+    return ret
 
 
 def wdeserialize(s, classlib: str):
@@ -26,6 +27,13 @@ def wdeserialize(s, classlib: str):
 
     return ret
 
+@jsonic_serializer(serialized_type=Path)
+def serialize_path(path: Path):
+    return {'path': path.as_posix()}
+
+@jsonic_deserializer(Path)
+def serialize_path(serialized_path):
+    return Path(serialized_path['path'])
 
 def extract_dict(obj, *names):
     d = {}
