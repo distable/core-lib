@@ -224,9 +224,6 @@ def get_first_match(path: str | Path, suffix: str | None = None, name: str | Non
 
     return None
 
-
-
-
 # region Scripts
 def script_exists(name):
     return get_script_file_path(name).exists()
