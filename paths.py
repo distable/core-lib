@@ -251,5 +251,5 @@ def get_script_file_path(name):
 
 def get_script_module_path(name=None):
     modpath = get_script_file_path(name)
-    return f'{scripts.name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}',
+    return f'{scripts.name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}'
 # endregion
