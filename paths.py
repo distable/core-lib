@@ -6,6 +6,7 @@ root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very rob
 
 scripts_name = 'scripts'
 userconf_name = 'user_conf.py'
+plug_res_name = 'plug-res'
 
 # Code for the core
 code_core = root / 'src_core'  # conflict with package names, must be prefixed differently here
@@ -20,7 +21,7 @@ plugins = root / 'src_plugins'
 scripts = root / 'scripts'
 
 # Contains the resources for each plugin, categorized by plugin id
-plug_res = root / 'plug-res'
+plug_res = root / plug_res_name
 
 # Contains the logs output by each plugin, categorized by plugin id
 plug_logs = root / 'plug-logs'
