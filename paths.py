@@ -1,6 +1,7 @@
 import math
 import re
 from pathlib import Path
+from typing import Tuple
 
 root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very robust
 
@@ -75,7 +76,7 @@ def short_pid(pid):
     return pid
 
 
-def split_jid(jid, allow_jobonly=False) -> tuple[str:None, str]:
+def split_jid(jid, allow_jobonly=False) -> Tuple[str:None, str]:
     """
     Split a plugin jid into a tuple of (plug, job)
     """
@@ -99,7 +100,7 @@ def parse_frames(name, frames):
     parse_frames('example', '1:5') -> ('example_1_5', 1, 5)
     parse_frames('example', ':5') -> ('example_5', None, 5)
     parse_frames('example', '1:') -> ('example_1', 1, None)
-    parse_frames("banner", None) --> ("banner", None, None)
+    parse_frames("banner", None) -> ("banner", None, None)
     """
     if frames is not None:
         sides = frames.split(':')
