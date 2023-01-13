@@ -76,7 +76,7 @@ def short_pid(pid):
     return pid
 
 
-def split_jid(jid, allow_jobonly=False) -> Tuple[str:None, str]:
+def split_jid(jid, allow_jobonly=False):
     """
     Split a plugin jid into a tuple of (plug, job)
     """
