@@ -107,7 +107,6 @@ def trace(name) -> float:
 
 @contextmanager
 def gputrace(name, vram_dt=False) -> float:
-
     vram = 0
     if vram_dt:
         vram = torch.cuda.memory_allocated()

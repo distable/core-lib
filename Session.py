@@ -34,6 +34,7 @@ class Session:
     00000021.png
     00000022.png
     """
+
     def __init__(self, name_or_abspath, load=True, fixpad=False):
         self.ctx = PipeData()
         self.jobs = []
@@ -461,6 +462,24 @@ class Session:
             subprocess.run(args)
 
         return out
+
+    def make_zip(self, frames=None):
+        # call ffmpeg to create video from image sequence in session folder
+        # do not halt, run in background as a new system process
+        zipfile = {self.dirpath} / 'frames.zip'
+
+        for f in self.dirpath.glob('*.png'):
+            try:
+                int(f.stem)
+                ok = False
+                if frames is None:
+                    ok = True
+                else:
+                    n, lo, hi = self.parse_frames('', frames)
+                    ok = lo <= int(f.stem) <= hi
+                if ok:
+                    os.system(f"zip -j {zipfile} {f}")
+            except: pass
 
 
     def make_rife(self, frames=None):
