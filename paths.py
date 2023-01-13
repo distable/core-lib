@@ -8,12 +8,14 @@ root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very rob
 scripts_name = 'scripts'
 userconf_name = 'user_conf.py'
 plug_res_name = 'plug-res'
+src_core_name = 'src_core'
+src_plugins_name = 'src_plugins'
 
 # Code for the core
-code_core = root / 'src_core'  # conflict with package names, must be prefixed differently here
+code_core = root / src_core_name  # conflict with package names, must be prefixed differently here
 
 # Downloaded plugin source code
-code_plugins = root / 'src_plugins'  # conflict with package names, must be prefixed differently here
+code_plugins = root / src_plugins_name  # conflict with package names, must be prefixed differently here
 
 # Contains the user's downloaded plugins (cloned from github)
 plugins = root / 'src_plugins'
