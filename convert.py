@@ -23,6 +23,9 @@ def ensure_extension(path: str | Path, ext):
 
 
 def save_png(pil, path, with_async=False):
+    if pil is None:
+        return
+
     with trace(f'save_png({Path(path).relative_to(Path.cwd())}, async={with_async})'):
         lpath = ensure_extension(path, '.png')
         path = Path(path)

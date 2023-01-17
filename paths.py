@@ -10,6 +10,7 @@ userconf_name = 'user_conf.py'
 plug_res_name = 'plug-res'
 src_core_name = 'src_core'
 src_plugins_name = 'src_plugins'
+sessions_name = 'sessions'
 
 # Code for the core
 code_core = root / src_core_name  # conflict with package names, must be prefixed differently here
@@ -37,7 +38,7 @@ plug_repos = root / 'plug-repos'
 #   - One session per client connect
 #   - Global session on a timeout
 #   - Started manually by the user
-sessions = root / 'sessions'
+sessions = root / sessions_name
 
 session_timestamp_format = '%Y-%m-%d_%Hh%M'
 

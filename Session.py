@@ -3,6 +3,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime
 from glob import glob
@@ -40,6 +41,8 @@ class Session:
         self.jobs = []
         self.args = dict()
         self.f = 1
+        self.processing_thread = None
+        self.cancel_processing = False
 
         if Path(name_or_abspath).is_absolute():
             self.dirpath = Path(name_or_abspath)
@@ -195,18 +198,13 @@ class Session:
 
     def save_add(self, subdir='', dat: PipeData = None):
         dat = dat or self.ctx
-
-        # Append to the current frame
-        path = self.dirpath / subdir / str(self.f)
+        path = self.current_frame_path()
 
         dat.save(path)
-
-        # Update the context file path
-        p = self.dirpath / (dat.file or '1.png')
-        p = p.with_name(str(self.f)).with_suffix('.png')
-        p = p.relative_to(self.dirpath)
-        dat.file = str(p)
         self.f += 1
+
+        path = path.relative_to(self.dirpath)
+        dat.file = str(path)
 
     def add_job(self, j):
         self.jobs.append(j)
@@ -336,6 +334,41 @@ class Session:
 
         return ret
 
+    def make_sequential(self):
+        """
+        Rename all session frame files to sequential numbers
+        """
+        self.zpad()
+
+        files = list(self.dirpath.iterdir())
+        files.sort()
+        i = 1
+        for file in files:
+            if file.is_file():
+                try:
+                    v = int(file.stem)
+                    src = file
+                    dst = self.get_frame_path(i)
+                    print(f'Rename {src} -> {dst} / off={v-i}')
+
+                    dst = dst.with_stem(f'__{dst.stem}')
+                    shutil.move(file, dst)
+
+                    i += 1
+                except:
+                    pass
+
+        # Iterate again to remove the __ prefix (we do this to avoid overwriting files)
+        files = list(self.dirpath.iterdir())
+        files.sort()
+        for file in files:
+            if file.is_file():
+                if file.stem.startswith('__'):
+                    src = file
+                    dst = file.with_stem(file.stem[2:])
+                    shutil.move(src, dst)
+
+
 
     def extract_frames(self, vidpath, nth_frame=1, frame_range: tuple | None = None, force=False) -> Path | str | None:
         vidpath = self.res(vidpath)
@@ -463,12 +496,20 @@ class Session:
 
         return out
 
-    def make_zip(self, frames=None):
-        # call ffmpeg to create video from image sequence in session folder
-        # do not halt, run in background as a new system process
-        zipfile = {self.dirpath} / 'frames.zip'
+    def make_archive(self, frames=None, archive_type='zip', bg=False):
+        if self.processing_thread is not None:
+            self.cancel_processing = True
+            self.processing_thread.join()
+            self.processing_thread = None
 
+        zipfile = self.dirpath / 'frames.zip'
+        self.processing_thread = threading.Thread(target=self._make_archive, args=(zipfile, frames, archive_type))
+        self.processing_thread.start()
+
+    def _make_archive(self, zipfile, frames, archive_type):
         for f in self.dirpath.glob('*.png'):
+            if self.cancel_processing:
+                break
             try:
                 int(f.stem)
                 ok = False
@@ -478,9 +519,16 @@ class Session:
                     n, lo, hi = self.parse_frames('', frames)
                     ok = lo <= int(f.stem) <= hi
                 if ok:
-                    os.system(f"zip -j {zipfile} {f}")
-            except: pass
+                    code = -1
+                    if archive_type == 'zip':
+                        code = os.system(f"zip -uj {zipfile} {f}  -1")
+                    elif archive_type == 'tar':
+                        code = os.system(f"tar -rf {zipfile} {f}")
+                    if code != 0:
+                        break
 
+            except: pass
+        self.processing_thread = None
 
     def make_rife(self, frames=None):
         RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
