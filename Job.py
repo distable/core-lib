@@ -1,8 +1,9 @@
+import random
+import time
 import uuid
 from datetime import datetime
 
 from .JobArgs import JobArgs
-from .PipeData import PipeData
 
 
 class JobState:
@@ -26,15 +27,13 @@ class Job:
 
     def __init__(self, jid: str | None, args: JobArgs | None):
         # Job definition
-        self.uid = str(uuid.uuid4())  # Unique ID of the job
+        self.uid = 0#str(random.randint(0, 2**31))
         self.jid = jid  # Jid to execute
         self.session = None
         self.aborting: bool = False
-        self.timestamp_post: str = datetime.now().isoformat()
-        self.timestamp_run: str = None
+        self.timestamp_post: float = time.time()
+        self.timestamp_run: float = None
         self.args: JobArgs = args
-        self.ctx = PipeData()
-        self.output = PipeData()
         self.state = JobState()
         self.queued = False
         self.running = False

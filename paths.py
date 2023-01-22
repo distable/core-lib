@@ -1,7 +1,6 @@
 import math
 import re
 from pathlib import Path
-from typing import Tuple
 
 root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very robust
 
@@ -51,6 +50,7 @@ sessions.mkdir(exist_ok=True)
 plugin_suffixes = ['_plugin']
 
 video_exts = ['.mp4', '.mov', '.avi', '.mkv']
+image_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
 
 leadnum_zpad = 8
 
@@ -98,7 +98,7 @@ def is_session(v):
     return sessions / v in sessions.iterdir()
 
 
-def parse_frames(name, frames):
+def parse_frames(frames, name='none'):
     """
     parse_frames('example', '1:5') -> ('example_1_5', 1, 5)
     parse_frames('example', ':5') -> ('example_5', None, 5)
@@ -111,16 +111,17 @@ def parse_frames(name, frames):
         hi = sides[1]
         if frames.endswith(':'):
             lo = int(lo)
-            return f'{name}_{lo}', lo, None
+            return lo, None, f'{name}_{lo}'
         elif frames.startswith(':'):
             hi = int(hi)
-            return f'{name}_{hi}', None, hi
+            return None, hi, f'{name}_{hi}'
         else:
             lo = int(lo)
             hi = int(hi)
-            return f'{name}_{lo}_{hi}', lo, hi
+            return lo, hi, f'{name}_{lo}_{hi}'
     else:
-        return name, None, None
+        return None, None, name
+
 
 # region Leadnums
 def get_leadnum_zpad(iterator=None, separator='', directory=None):
@@ -153,25 +154,25 @@ def get_leadnum_zpad(iterator=None, separator='', directory=None):
     return biggest
 
 
-def is_leadnum_zpadded(iterator=None, separator='', directory=None):
-    return get_leadnum_zpad(iterator, separator, directory) >= 2
+def is_leadnum_zpadded(iterator=None, directory=None):
+    return get_leadnum_zpad(iterator, directory) >= 2
 
 
-def get_next_leadnum(iterator=None, separator='', directory=None):
-    return get_max_leadnum(iterator, separator, directory) + 1
+def get_next_leadnum(iterator=None, directory=None):
+    return get_max_leadnum(iterator, directory) + 1
 
 
-def get_max_leadnum(iterator=None, separator='', directory=None):
-    lo, hi = get_leadnum(iterator, separator, directory)
+def get_max_leadnum(iterator=None, directory=None):
+    lo, hi = get_leadnum(iterator, directory)
     return hi
 
 
-def get_min_leadnum(iterator=None, separator='', directory=None):
-    lo, hi = get_leadnum(iterator, separator, directory)
+def get_min_leadnum(iterator=None, directory=None):
+    lo, hi = get_leadnum(iterator, directory)
     return lo
 
 
-def get_leadnum(iterator=None, separator='', directory=None):
+def get_leadnum(iterator=None, directory=None):
     """
     Find the largest 'leading number' in the directory names and return it
     e.g.:
@@ -182,6 +183,9 @@ def get_leadnum(iterator=None, separator='', directory=None):
 
     return value is 28
     """
+    if isinstance(iterator, str):
+        return find_leadnum(iterator)
+
     iterator = get_dir_iter(iterator, directory)
     if iterator is None:
         return 0, 0
@@ -189,15 +193,24 @@ def get_leadnum(iterator=None, separator='', directory=None):
     smallest = math.inf
     biggest = 0
     for path in iterator:
-        if not Path(path).is_dir():
-            match = re.match(r"^(\d+)" + separator, Path(path).name)
-            if match is not None:
-                num = int(match.group(1))
-                if match:
-                    smallest = min(smallest, num)
-                    biggest = max(biggest, num)
+        path = Path(path)
+        if not path.is_dir():
+            num = find_leadnum(name=path.name)
+            smallest = min(smallest, num)
+            biggest = max(biggest, num)
 
     return smallest, biggest
+
+
+def find_leadnum(path=None, name=None):
+    if name is None:
+        name = Path(path).name
+
+    match = re.match(r"^(\d+)", name)
+    num = 0
+    if match is not None:
+        num = int(match.group(1))
+    return num
 
 
 # endregion
@@ -210,7 +223,7 @@ def get_dir_iter(iterator, directory):
         iterator = Path(iterator)
     if isinstance(iterator, Path):
         if not iterator.exists():
-            iterator = None
+            return None
         iterator = iterator.iterdir()
     return iterator
 
@@ -229,22 +242,26 @@ def get_first_match(path: str | Path, suffix: str | None = None, name: str | Non
 
     return None
 
+
 # region Scripts
 def script_exists(name):
     return get_script_file_path(name).exists()
 
 
 def parse_action_script(s, default=None):
+    """
+    script:action
+    """
     if s is None:
         return None, None
 
     v = s.split(':')
 
     action = v[0]
-    script = None
+    script = default
 
-    if script_exists(v[0]):
-        action = v[1] if len(v) > 1 else default
+    if len(v) > 1:
+        action = v[1]
         script = v[0]
 
     return action, script
@@ -257,4 +274,60 @@ def get_script_file_path(name):
 def get_script_module_path(name=None):
     modpath = get_script_file_path(name)
     return f'{scripts.name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}'
+
+
 # endregion
+def rmtree(path):
+    """
+    Remove a directory and all its contents
+    """
+    path = Path(path)
+    if path.exists():
+        import shutil
+        shutil.rmtree(path)
+
+
+def remap(dst, fn):
+    for f in dst.iterdir():
+        if f.is_file():
+            try:
+                num = int(f.stem)
+                f.rename(dst / f"{fn(num)}.png")
+            except:
+                pass
+
+
+def mktree(path):
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+def rmclean(path):
+    """
+    Remove a directory and all its contents, and then recreate it clean
+    """
+    path = Path(path)
+    if path.exists():
+        import shutil
+        shutil.rmtree(path)
+
+    path.mkdir(parents=True, exist_ok=True)
+
+def file_tqdm(path, start, target, process, desc='Processing'):
+    from tqdm import tqdm
+    import time
+
+    tq = tqdm(total=target)
+    tq.set_description(desc)
+    last_num = start
+    while process.poll() is None:
+        cur_num = len(list(path.iterdir()))
+        diff = cur_num - last_num
+        if diff > 0:
+            tq.update(diff)
+            last_num = cur_num
+
+        tq.refresh()
+        time.sleep(1)
+
+    tq.update(target - tq.n)  # Finish the bar
+    tq.close()

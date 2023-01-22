@@ -15,13 +15,14 @@ class JobInfo:
         self.plugid = plugin.id
         self.key = key
         self.is_alias = is_alias
+        self.paramclass = self.determine_paramclass()
 
     @property
     def short_jid(self):
         plug, job = paths.split_jid(self.jid, True)
         return job
 
-    def get_paramclass(self, directly_under_job=False):
+    def determine_paramclass(self, directly_under_job=False):
         """
         Get the parameters for a job query
         """
@@ -71,13 +72,13 @@ class JobInfo:
             if callable(v):
                 kwargs[k] = v()
 
-        return self.get_paramclass()(**kwargs)
+        return self.paramclass(**kwargs)
 
     def get_groupclass(self):
         if self.key is not None:
             return self.key
         else:
-            return self.get_paramclass()
+            return self.paramclass
 
 
     def __repr__(self):

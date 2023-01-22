@@ -2,8 +2,8 @@ from src_core.classes import printlib
 
 logsession = printlib.make_print("session")
 logsession_err = printlib.make_printerr("session")
-loglaunch = printlib.make_print("launch")
-loglaunch_err = printlib.make_printerr("launch")
+logdiscore = printlib.make_print("discore")
+logdiscore_err = printlib.make_printerr("discore")
 logcore = printlib.make_print("core")
 logcore_err = printlib.make_printerr("core")
 logplugin = printlib.make_print("plugin")

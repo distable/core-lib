@@ -1,25 +1,22 @@
 import math
 import os
-import pathlib
 import shutil
 import subprocess
 import threading
-import time
 from datetime import datetime
-from glob import glob
 from pathlib import Path
 
-import PIL
-from PIL.Image import Image
+import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 from . import paths
+from .convert import cv2pil, load_pil, save_png
 from .JobInfo import JobInfo
-from .PipeData import PipeData
-from .paths import get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
-from .convert import load_pil
 from .logs import logsession, logsession_err
-from .printlib import trace
+from .paths import get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
+from .printlib import cpuprofile, printerr, trace
+from ..lib.corelib import shlexproc
 
 
 class Session:
@@ -34,15 +31,40 @@ class Session:
     00000020.png
     00000021.png
     00000022.png
+
+    The session tracks a 'current' frame (f). Upon first loading a session,
+    the current frame is set to the last frame in the directory.
+    The session defines 'seeking' functions to advance the current frame.
+
+    The session also tracks a context data.
     """
 
-    def __init__(self, name_or_abspath, load=True, fixpad=False):
-        self.ctx = PipeData()
+    def __init__(self, name_or_abspath, load=True, fixpad=False, log=True):
         self.jobs = []
         self.args = dict()
-        self.f = 1
+
         self.processing_thread = None
         self.cancel_processing = False
+        self.dev = False
+
+        # Context properties
+        self.prompt = ''
+        self.width = None
+        self.height = None
+        self.file = None
+        self.fps = 24
+        self._image = None
+        self._image_cv2 = None
+
+        # Directory properties, cached for performance
+        self.f = 1
+        self.f_first = 1
+        self.f_last = 1
+        self.f_path = ''
+        self.f_exists = False
+        self.f_first_path = ''
+        self.f_last_path = ''
+        self.suffix = ''
 
         if Path(name_or_abspath).is_absolute():
             self.dirpath = Path(name_or_abspath)
@@ -57,9 +79,10 @@ class Session:
 
         if self.dirpath.exists():
             if load:
-                self.try_load()
+                self.load()
         else:
-            logsession("New session:", self.name)
+            if log:
+                logsession("New session:", self.name)
 
         if fixpad:
             if self.dirpath.is_dir() and not is_leadnum_zpadded(self.dirpath):
@@ -67,15 +90,21 @@ class Session:
                 self.zpad(leadnum_zpad)
 
 
+    def exists(self):
+        return self.dirpath.exists()
+
+    def rmtree(self):
+        shutil.rmtree(self.dirpath.as_posix())
+
     @staticmethod
-    def now(prefix=''):
+    def now(prefix='', log=True):
         """
         Returns: A new session which is timestamped to now
         """
         name = datetime.now().strftime(paths.session_timestamp_format)
         if None is None:
             num = get_next_leadnum(directory=sessions)
-        return Session(f"{prefix}{name}")
+        return Session(f"{prefix}{name}", log=log)
 
     @staticmethod
     def recent_or_now(recent_window=math.inf):
@@ -92,43 +121,57 @@ class Session:
 
         return Session.now()
 
-    # @staticmethod
-    # def recent_or_now():
-    #     """
-    #     Returns: The most recent session, or a new session if none exists
-    #     """
-    #     else:
-    #         return Session.now()
+    def load(self):
+        """
+        Load the session state from disk.
+        If new frames have been added externally without interacting directly with a session object,
+        this will update the session state to reflect the new frames.
+        """
+        if not self.dirpath.exists():
+            return
 
-    def try_load(self):
-        if self.dirpath.exists():
-            if any(self.dirpath.iterdir()):
-                recent = None
+        if not any(self.dirpath.iterdir()):
+            logsession(f"Loaded session {self.name} at {self.dirpath}")
+            return
 
-                # Set the context to the most recent file in the session directory
-                with trace('try_load.ordering'):
-                    files = self.dirpath.glob('*')
-                    l = sum([len(files) for (root, dirs, files) in os.walk(self.dirpath)])
+        leadnum = get_max_leadnum(self.dirpath)
+        if leadnum is not None:
+            self.set(self.determine_frame_path(leadnum))
+        else:
+            pass  # TODO maybe use the most recent file
 
-                # Going down in a loop
-                # l = len(files)
-                now = self.get_frame_path(l)
-                while not now.exists() and l > 0:
-                    l -= 1
-                    now = self.get_frame_path(l)
-                if now.exists():
-                    recent = now
+        logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
 
-                if recent is not None:
-                    recent = self.dirpath / recent
-                    self.ctx = PipeData.file(recent)
+        self.suffix = self.determine_suffix()
+        self.f_first = get_min_leadnum(self.dirpath)
+        self.f_last = get_max_leadnum(self.dirpath)
+        self.f_exists = False
 
-                logsession(f"Loaded session {self.name} ({self.ctx.width}x{self.ctx.height}) at {self.dirpath} ({self.ctx.file})")
-            else:
-                logsession(f"Loaded session {self.name} at {self.dirpath}")
+        self.f_first_path = self.determine_frame_path(self.f_first)
+        self.f_last_path = self.determine_frame_path(self.f_last)
+        self.f_path = self.f_last_path
+        self.f = self.f_last
+        self.load_f()
 
-            # TODO load a session metadata file
-            self.seek_max(prints=False)
+        # TODO load a session metadata file
+
+    def load_f(self, f=None):
+        f = f or self.f
+
+        self.f_path = self.f_last_path
+        self.file = self.get_frame_name(self.f)
+        if self.f < self.f_last:
+            self.f_exists = self.load_file()
+
+    def load_file(self):
+        file = self.dirpath / self.file
+        if file.suffix in paths.image_exts:
+            if file.exists():
+                self.set(file)
+                return True
+
+            return False
+
 
     def last_prop(self, propname: str):
         for arglist in self.args:
@@ -146,65 +189,153 @@ class Session:
         else:
             return self.dirpath.resolve()
 
-
-    @property
-    def last_frame_path(self):
-        return self.get_frame_path(get_max_leadnum(self.dirpath))
-
-    @property
-    def first_frame_path(self):
-        return self.get_frame_path(get_min_leadnum(self.dirpath))
-
-    @property
-    def f_first(self):
-        return get_min_leadnum(self.dirpath)
-
-    @property
-    def f_last(self):
-        return get_max_leadnum(self.dirpath)
-
     @property
     def t(self):
-        return self.f / self.ctx.fps
+        return self.f / self.fps
 
     @property
     def w(self):
-        return self.ctx.width
+        return self.width
+
+    @w.setter
+    def w(self, value):
+        self.width = value
 
     @property
     def h(self):
-        return self.ctx.height
+        return self.height
 
-    def get_frame_path(self, f, subdir=''):
-        p1 = (self.dirpath / subdir / str(f)).with_suffix('.png')
-        p2 = (self.dirpath / subdir / str(f).zfill(8)).with_suffix('.png')
-        if p1.exists(): return p1
-        return p2  # padded is now the default
+    @h.setter
+    def h(self, value):
+        self.height = value
 
-    def current_frame_path(self, subdir=''):
-        return self.get_frame_path(self.f, subdir)
+    @property
+    def image(self):
+        if self._image_cv2 is not None:
+            self._image = Image.fromarray(self._image_cv2)
+        return self._image
 
-    def current_frame_exists(self):
-        return self.current_frame_path().is_file()
+    @property
+    def image_cv2(self):
+        from .convert import pil2cv
+        if self._image_cv2 is None:
+            self._image_cv2 = pil2cv(self._image)
+            self._image = None
+        return self._image_cv2
 
-    def save(self, dat: PipeData = None, path=None):
-        dat = dat or self.ctx
-        path = path or self.ctx.file
+    @image.setter
+    def image(self, value):
+        self._image = value
+        self._image_cv2 = None
+
+    @image_cv2.setter
+    def image_cv2(self, value):
+        self._image_cv2 = value
+        self._image = None
+
+    def get_frame_name(self, f):
+        return str(f).zfill(8) + self.suffix
+
+    def get_current_frame_name(self):
+        return self.get_frame_name(self.f)
+
+    def determine_frame_path(self, f, subdir='', suffix=None):
+        if suffix is not None:
+            p1 = (self.dirpath / subdir / str(f)).with_suffix(suffix)
+            p2 = (self.dirpath / subdir / str(f).zfill(8)).with_suffix(suffix)
+            if p1.exists(): return p1
+            return p2  # padded is now the default
+        else:
+            if self.suffix:
+                return self.determine_frame_path(f, subdir, self.suffix)
+
+            jpg = self.determine_frame_path(f, subdir, '.jpg')
+            png = self.determine_frame_path(f, subdir, '.png')
+            if jpg.exists():
+                return jpg
+            else:
+                return png
+
+    def determine_suffix(self, f=None):
+        if f is None:
+            return self.determine_suffix(self.f_first) \
+                or self.determine_suffix(self.f_last) \
+                or self.determine_suffix(1)
+
+        return self.determine_frame_path(f).suffix
+
+    def determine_frame_pil(self, f, subdir=''):
+        return load_pil(self.determine_frame_path(f, subdir))
+
+    def determine_current_frame_path(self, subdir=''):
+        return self.determine_frame_path(self.f, subdir)
+
+    def determine_current_frame_exists(self):
+        return self.determine_current_frame_path().is_file()
+
+    def determine_f_first_path(self):
+        return self.determine_frame_path(get_min_leadnum(self.dirpath))
+
+    def determine_f_last_path(self):
+        return self.determine_frame_path(get_max_leadnum(self.dirpath))
+
+    def set(self, dat):
+        from PIL import ImageFile
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+        # Image output is moved into the context
+        with trace(f"session.set({dat.shape if isinstance(dat, np.ndarray) else dat})"):
+            if isinstance(dat, Image.Image):
+                self._image = dat
+                self._image_cv2 = None
+            elif isinstance(dat, str) or isinstance(dat, Path):
+                self._image = Image.open(dat)
+                self.file = dat
+            elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
+                printerr("Multiple images in set_image data, using first")
+                self._image = dat[0]
+            elif isinstance(dat, np.ndarray):
+                self._image_cv2 = dat
+
+        if self._image:
+            # Set width and height from image if not set
+            if not self.width: self.width = self._image.width
+            if not self.height: self.height = self._image.height
+
+            # Resize image to match context size
+            if self._image and (self.width != self._image.width or self.height != self._image.height):
+                self._image = self._image.resize((self.width, self.height), Image.BICUBIC)
+
+            if self._image.mode != "RGB":
+                self._image = self._image.convert("RGB")
+
+    def save(self, path=None):
+        if not path and self.file:
+            path = self.res(self.file)
+        if not path:
+            path = self.f_path
 
         if not Path(path).is_absolute():
             path = self.dirpath / path
 
-        dat.save(path)
+        save_num = paths.get_leadnum(path)
+        if save_num > self.f_last: self.f_last = save_num
+        if save_num < self.f_first: self.f_first = save_num
 
-    def save_add(self, subdir='', dat: PipeData = None):
-        dat = dat or self.ctx
-        path = self.current_frame_path()
+        if self._image_cv2 is not None:
+            self._image = cv2pil(self._image_cv2)
 
-        dat.save(path)
-        self.f += 1
+        path = Path(path)
+        if isinstance(self._image, Image.Image):
+            path = path.with_suffix(".png")
+            save_png(self._image, path, with_async=True)
+        else:
+            printerr(f"Cannot save {self._image} to {path}")
 
-        path = path.relative_to(self.dirpath)
-        dat.file = str(path)
+        self.file = path.name
+
+        logsession(f"Save {path}")
+        return self
 
     def add_job(self, j):
         self.jobs.append(j)
@@ -226,23 +357,23 @@ class Session:
         else:
             return {}
 
-
     def seek(self, i=None, prints=True):
         if i is None:
             # Seek to next
             self.f = get_next_leadnum(self.dirpath)
-            self.ctx.file = f'{str(self.f)}.png'
-            self.ctx.load(self.dirpath)
-            if print: logsession("Seek to", self.f)
         elif isinstance(i, int):
             # Seek to i
             i = max(i, 1)  # Frames start a 1
             self.f = i
-            self.ctx.file = f'{str(i)}.png'
-            self.ctx.load(self.dirpath)
-            if print: logsession("Seek to", self.f)
         else:
             logsession_err(f"Invalid seek argument: {i}")
+            return
+
+        # self._image = None
+        self.load_f()
+
+        if prints:
+            logsession(f"({self.name}) seek({self.f})")
 
     def seek_min(self, prints=True):
         if any(self.dirpath.iterdir()):
@@ -255,16 +386,14 @@ class Session:
             self.f = get_max_leadnum(self.dirpath)
             self.seek(self.f, prints)
 
-    def seek_next(self, i=1):
+    def seek_next(self, i=1, log=True):
         self.f += i
-        self.seek(self.f)
+        self.seek(self.f, log)
 
+    def seek_new(self, log=True):
+        self.seek(None, log)
 
-    @property
-    def image(self):
-        return self.ctx.image
-
-    def subsession(self, name):
+    def subsession(self, name) -> "Session":
         if name:
             return Session(self.res(name))
         else:
@@ -293,9 +422,9 @@ class Session:
 
         # If the resid is a number, assume it is a frame number
         if isinstance(resid, int):
-            return self.res(f'{resid}.png')
+            return self.determine_frame_path(resid)
         elif resid is None:
-            return self.res(f'{self.f}.png')
+            return self.f_path
 
         # If the resid is a string, parse it
         nameparts = resid.split(':')
@@ -327,10 +456,10 @@ class Session:
 
         return None
 
-    def res_framepil(self, name, subdir='', ext=None, loop=False, ctxsize=False) -> Path | None:
+    def res_framepil(self, name, subdir='', ext=None, loop=False, ctxsize=False):
         ret = load_pil(self.res_frame(name, subdir, ext, loop))
         if ctxsize:
-            ret = ret.resize((self.ctx.width, self.ctx.height))
+            ret = ret.resize((self.width, self.height))
 
         return ret
 
@@ -348,8 +477,8 @@ class Session:
                 try:
                     v = int(file.stem)
                     src = file
-                    dst = self.get_frame_path(i)
-                    print(f'Rename {src} -> {dst} / off={v-i}')
+                    dst = self.determine_frame_path(i)
+                    print(f'Rename {src} -> {dst} / off={v - i}')
 
                     dst = dst.with_stem(f'__{dst.stem}')
                     shutil.move(file, dst)
@@ -368,44 +497,36 @@ class Session:
                     dst = file.with_stem(file.stem[2:])
                     shutil.move(src, dst)
 
+    def extract_frames(self, src, nth_frame=1, frames: tuple | None = None, w=None, h=None, overwrite=False) -> Path | str | None:
+        src = self.res(src)
 
+        lo, hi, name = self.parse_frames(frames, src.stem)
 
-    def extract_frames(self, vidpath, nth_frame=1, frame_range: tuple | None = None, force=False) -> Path | str | None:
-        vidpath = self.res(vidpath)
+        vf = ""
+        if frames is not None:
+            vf += f'select=between(t\,{lo}\,{hi})'
+        else:
+            vf = f'select=not(mod(n\,{nth_frame}))'
 
-        vf = f'select=not(mod(n\\,{nth_frame}))'
-        if frame_range is not None:
-            vf += f',select=between(t\\,{frame_range[0]}\\,{frame_range[1]})'
+        vf, w, h = vf_rescale(vf, w, h, self.width, self.height)
 
-        if vidpath.exists():
-            output_path = self.res(vidpath.with_suffix(''))
-
-            if output_path.exists():
-                if not force:
-                    logsession(f"Frame extraction already exists for {vidpath.name}, skipping ...")
-                    return output_path
+        if src.exists():
+            dst = self.res(name)
+            if dst.exists():
+                if not overwrite:
+                    logsession(f"Frame extraction already exists for {src.name}, skipping ...")
+                    return dst
                 else:
-                    logsession(f"Frame extraction already exists for {vidpath.name}, overwriting ...")
-                    import shutil
-                    shutil.rmtree(output_path)
+                    logsession(f"Frame extraction already exists for {src.name}, overwriting ...")
 
-            output_path.mkdir(parents=True, exist_ok=True)
-
-            # TODO wtf is this for?
-            print(f"Exporting Video Frames (1 every {nth_frame})...")
-            try:
-                for f in [o.replace('\\', '/') for o in glob(f'{output_path}/*.png')]:
-                    # for f in pathlib.Path(f'{output_path}').glob('*.png'):
-                    pathlib.Path(f).unlink()
-            except:
-                print('error deleting frame ', f)
+            paths.rmclean(dst)
 
             try:
-                subprocess.run(['ffmpeg', '-i', f'{vidpath}', '-vf', f'{vf}', '-vsync', 'vfr', '-q:v', '2', '-loglevel', 'error', '-stats', f'{output_path}/%06d.png'], stdout=subprocess.PIPE).stdout.decode('utf-8')
+                subprocess.run(['ffmpeg', '-i', f'{src}', '-vf', f'{vf}', '-q:v', '2', '-loglevel', 'error', '-stats', f'{dst}/%0{paths.leadnum_zpad}d.jpg'], stdout=subprocess.PIPE).stdout.decode('utf-8')
             except:
-                subprocess.run(['ffmpeg.exe', '-i', f'{vidpath}', '-vf', f'{vf}', '-vsync', 'vfr', '-q:v', '2', '-loglevel', 'error', '-stats', f'{output_path}/%06d.png'], stdout=subprocess.PIPE).stdout.decode('utf-8')
+                subprocess.run(['ffmpeg.exe', '-i', f'{src}', '-vf', f'{vf}', '-q:v', '2', '-loglevel', 'error', '-stats', f'{dst}/%0{paths.leadnum_zpad}d.jpg'], stdout=subprocess.PIPE).stdout.decode('utf-8')
 
-            return output_path
+            return dst
         else:
             return None
 
@@ -418,16 +539,16 @@ class Session:
         #     current.save_next(ret)
         #     print("")
 
-    def make_video(self, fps, skip=3, bg=False, music='', music_start=0, frames=None, fade_in=.5, fade_out=1.25, upscale_w=None, upscale_h=None):
+    def make_video(self, fps, skip=3, bg=False, music='', music_start=0, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
         # call ffmpeg to create video from image sequence in session folder
         # do not halt, run in background as a new system process
 
         # Detect how many leading zeroes are in the frame files
         lzeroes = get_leadnum_zpad(self.dirpath)
 
-        pattern_with_zeroes = '%d.png'
+        pattern_with_zeroes = f'%d{self.suffix}'
         if lzeroes >= 2:
-            pattern_with_zeroes = f'%0{lzeroes}d.png'
+            pattern_with_zeroes = f'%0{lzeroes}d{self.suffix}'
 
         musicargs = []
         if music:
@@ -435,12 +556,6 @@ class Session:
 
         name = 'video'
         vf = ''
-
-        def add_vf(s):
-            nonlocal vf
-            if vf:
-                vf += ','
-            vf += s
 
         # Frame range
         # ----------------------------------------
@@ -452,32 +567,15 @@ class Session:
             frameargs1 = ['-start_number', str(lo)]
             frameargs2 = ['-frames:v', str(hi - lo + 1)]
 
-        # Determine framecount from filename pattern
-        framecount = self.f
-        duration = framecount / fps
-
         # VF filters
         # ----------------------------------------
-        if fade_in < duration:
-            add_vf(f'fade=in:st=0:d={fade_in}')
-        if fade_out < duration:
-            add_vf(f'fade=out:st={self.f / fps - fade_out}:d={fade_out}')
+        # Determine framecount from filename pattern
+        framecount = self.f_last
 
-        # Upscale
-        # ----------------------------------------
-        if upscale_w is not None:
-            ratio = upscale_w / self.ctx.width
-            upscale_h = int(self.ctx.height * ratio)
-            add_vf(f'scale={upscale_w}:{upscale_h}')
-            print(f"Making video at {upscale_w}x{upscale_h}")
-        if upscale_h is not None:
-            ratio = upscale_h / self.ctx.height
-            upscale_w = int(self.ctx.width * ratio)
-            add_vf(f'scale={upscale_w}:{upscale_h}')
-            print(f"Making video at {upscale_w}x{upscale_h}")
-        if upscale_w is None and upscale_h is None:
-            print(f"Making video at {self.ctx.width}x{self.ctx.height}")
-        print('vf: ', vf)
+        vf = vf_fade(vf, fade_in, fade_out, framecount, fps)
+        vf, w, h = vf_rescale(vf, w, h, self.width, self.height)
+
+        print(f"Making video at {w}x{h}")
 
         # Run
         # ----------------------------------------
@@ -496,6 +594,7 @@ class Session:
 
         return out
 
+
     def make_archive(self, frames=None, archive_type='zip', bg=False):
         if self.processing_thread is not None:
             self.cancel_processing = True
@@ -507,7 +606,7 @@ class Session:
         self.processing_thread.start()
 
     def _make_archive(self, zipfile, frames, archive_type):
-        for f in self.dirpath.glob('*.png'):
+        for f in self.dirpath.glob(f'*{self.suffix}'):
             if self.cancel_processing:
                 break
             try:
@@ -530,38 +629,51 @@ class Session:
             except: pass
         self.processing_thread = None
 
-    def make_rife(self, frames=None):
+    def make_rife(self, frames=None, name=None, scale=2):
         RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
 
-        name = 'rife'
-        lo = None
-        hi = None
-        if frames:
-            name, lo, hi = self.parse_frames(name, frames)
+        lo, hi, name = self.parse_frames(frames, name or 'rife')
+        ipath = self.dirpath
+        dst = self.dirpath / name
 
-        input = self.dirpath
-        tmp = self.res('rife_tmp')
-        output = self.dirpath / name
+        print(f"make_rife({ipath}, dst={dst}, lo={lo}, hi={hi})")
 
-        lead = get_max_leadnum(input)
-        lo = lo or 0
-        hi = hi or lead
-
-        shutil.rmtree(tmp, ignore_errors=True)
-        shutil.rmtree(output, ignore_errors=True)
-        tmp.mkdir(parents=True, exist_ok=True)
-        output.mkdir(parents=True, exist_ok=True)
-
-        print(f"make_rife(input={input}, output={output}, lo={lo}, hi={hi if hi < lead else 'max'})")
-
-        # Copy  %d.png frames to tmp folder
+        # Run RIFE with tqdm progress bar
         # ----------------------------------------
+
+        # start_num = len(list(dst.iterdir()))
+
+        dst = paths.rmclean(dst)
+        src = self.copy_frames('rife_src', frames, ipath)
+        proc = shlexproc(f'rife-ncnn-vulkan -i {src.as_posix()} -o {dst.as_posix()}')
+
+        paths.file_tqdm(dst,
+                        start=0,
+                        target=(hi - lo) * RESOLUTION,
+                        process=proc,
+                        desc=f"Running rife ...")
+        paths.rmtree(src)
+        paths.remap(dst, lambda num: num + lo * RESOLUTION - 1)
+
+        return dst
+
+
+    def copy_frames(self, name, frames=None, src=None):
+        RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
+
+        name = name
+        lo, hi, name = self.parse_frames(frames, name)
+
+        src = src or self.dirpath
+        dst = self.res(name)
+
+        paths.rmclean(dst)
+
         lead = hi - lo
         tq = tqdm(total=lead)
-        tq.set_description(f"Copying frames to {tmp.relative_to(self.dirpath)} ...")
+        tq.set_description(f"Copying frames to {dst.relative_to(self.dirpath)} ...")
         lz = max(len(str(lo)), len(str(hi)))
-
-        for f in input.iterdir():
+        for f in src.iterdir():
             if f.is_file():
                 try:
                     leadnum = int(f.stem)
@@ -569,66 +681,27 @@ class Session:
                     leadnum = -1
 
                 if lo <= leadnum <= hi:
-                    shutil.copy(f, tmp / f"{leadnum:0{lz}d}.png")
+                    shutil.copy(f, dst / f"{leadnum:0{lz}d}{self.suffix}")
                     tq.update(1)
-
         # Finish the tq
         tq.update(lead - tq.n)
         tq.close()
 
-        # Run RIFE with tqdm progress bar
-        # ----------------------------------------
-        args = ['rife-ncnn-vulkan', '-i', tmp.as_posix(), '-o', output.as_posix()]
-        print(' '.join(args))
+        return dst
 
-        lead = (hi - lo) * 2
-        start_num = len(list(output.iterdir()))
-        end_num = start_num + lead
-
-        tq = tqdm(total=lead)
-        tq.set_description(f"Running rife ...")
-        last_num = start_num
-
-        proc = subprocess.Popen(args)
-        while proc.poll() is None:
-            cur_num = len(list(output.iterdir()))
-            diff = cur_num - last_num
-            if diff > 0:
-                tq.update(diff)
-                last_num = cur_num
-
-            tq.refresh()
-            time.sleep(1)
-
-        shutil.rmtree(tmp)
-        tq.update(lead - tq.n)
-        tq.close()
-
-        # Rename RIFE outputs to add with lo
-        # ----------------------------------------
-        for f in output.iterdir():
-            if f.is_file():
-                try:
-                    leadnum = int(f.stem)
-                except:
-                    leadnum = -1
-
-                if leadnum >= 0:
-                    newname = f"{leadnum + lo * RESOLUTION - 1}.png"
-                    f.rename(output / newname)
-
-        return output
-
-    def zpad(self, zeroes=8):
+    def zpad(self, zeroes=None):
         """
         Pad the frame numbers with 8 zeroes
         """
+        if zeroes is None:
+            zeroes = paths.leadnum_zpad
+
         for f in self.dirpath.iterdir():
             if f.is_file():
                 try:
                     num = int(f.stem)
-                    newname = f"{num:0{zeroes}d}.png"
-                    f.rename(f.with_name(newname))
+                    newname = f"{num:0{zeroes}d}{self.suffix}"
+                    shutil.move(f, f.with_name(newname))
                 except:
                     pass
 
@@ -640,13 +713,140 @@ class Session:
             if f.is_file():
                 try:
                     num = int(f.stem)
-                    newname = f"{num}.png"
-                    f.rename(f.with_name(newname))
+                    newname = f"{num}{self.suffix}"
+                    shutil.move(f, f.with_name(newname))
                 except:
                     pass
 
-    def parse_frames(self, name, frames):
-        name, lo, hi = parse_frames(name, frames)
+    def parse_frames(self, frames, name='none'):
+        lo, hi, name = parse_frames(frames, name=name)
+
         if lo is None: lo = self.f_first
         if hi is None: hi = self.f_last
-        return name, lo, hi
+
+        # lead = get_max_leadnum(input)
+        # lo = lo or 0
+        # hi = hi or lead
+        #
+        return lo, hi, name
+
+    def run0(self, jquery, fg=True, **kwargs):
+        if self._image is None:
+            self.run(jquery, fg=fg, **kwargs)
+            self.save()
+
+
+    def run(self, jquery, fg=True, **kwargs):
+        """
+        Run a job in the context of a session.
+        """
+        from src_core import plugins
+        import jargs
+
+        with cpuprofile(jargs.args.profile_run_session):
+            ifo = plugins.get_job(jquery)
+            if ifo is None:
+                logsession_err(f"Job {jquery} not found!")
+                return None
+
+            # Save outputs
+            def on_done(ret):
+                self.set(ret)
+
+            # Apply memorized self kwargs
+            j = plugins.new_job(jquery, **{**self.get_kwargs(ifo), **kwargs})
+            j.session = self
+            j.on_done = on_done
+
+            import user_conf
+            if self.dev and jquery in user_conf.forbidden_dev_jobs:
+                return None
+
+            # Store the prompt into ctx data
+            if j.args.prompt: self.prompt = j.args.prompt
+            if j.args.w: self.width = j.args.w
+            if j.args.h: self.height = j.args.h
+
+            self.add_kwargs(ifo, plugins.get_args(jquery, kwargs, True))
+            self.add_job(j)
+
+        # run
+        # ----------------------------------------
+        from src_core import jobs
+        from yachalk import chalk
+        from src_core.classes import printlib
+
+        if fg:
+            # logcore(f"{chalk.blue(j.jid)}(...)")
+            with cpuprofile(jargs.args.profile_run_job):
+                ret = jobs.run(j)
+
+            jargs = j.args
+            jargs_str = {k: v for k, v in jargs.__dict__.items() if isinstance(v, (int, float, str))}
+            jargs_str = ' '.join([f'{chalk.green(k)}={chalk.white(printlib.str(v))}' for k, v in jargs_str.items()])
+
+            if isinstance(ret, np.ndarray):
+                logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(ret.shape)}")
+            else:
+                logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(printlib.str(ret))}")
+            return ret
+        else:
+            return jobs.enqueue(j)
+            # proxy.emit("start_job", plugins.new_args())
+
+
+def concat(s1, s2):
+    if s1:
+        s1 += ','
+    return s1 + s2
+
+
+def vf_rescale(vf, w, h, ow, oh):
+    """
+    Rescale by keeping aspect ratio.
+    Args:
+        vf:
+        h: Target height (or none) can be a percent str or an int
+        w: Target width (or none) can be a percent str or an int
+        ow: original width (for AR calculation)
+        oh: original height (for AR calculation)
+
+    Returns:
+
+    """
+    if isinstance(h, str):
+        h = int(h.replace('%', '')) / 100
+        h = f'ih*{str(h)}'
+    if isinstance(w, str):
+        w = int(w.replace('%', '')) / 100
+        w = f'iw*{str(w)}'
+    if w is None:
+        w = f'-1'
+    if h is None:
+        h = f'-1'
+
+    vf = concat(vf, f"scale={w}:{h}")
+
+    # if h == '-1':
+    #     ratio = w / ow
+    #     h = int(oh * ratio)
+    #     vf = concat(vf, f'scale={w}:{h}')
+    # if w == '-1'
+    #     ratio = h / oh
+    #     w = int(ow * ratio)
+    #     vf = concat(vf, f'scale={w}:{h}')
+    # elif w is None and h is None:
+    #     pass
+    #     # print(f"Making video at {ow}x{oh}")
+
+    return vf, w, h
+
+
+def vf_fade(vf, fade_in, fade_out, frames, fps):
+    duration = frames / fps
+    if fade_in < duration:
+        vf = concat(vf, f'fade=in:st=0:d={fade_in}')
+    if fade_out < duration:
+        vf = concat(vf, f'fade=out:st={frames / fps - fade_out}:d={fade_out}')
+
+    return vf

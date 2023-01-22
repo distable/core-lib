@@ -18,12 +18,13 @@ class JobArgs:
         if 'n' in kwargs: self.job_repeats = int(kwargs['n'])
         elif 'repeats' in kwargs: self.job_repeats = int(kwargs['repeats'])
 
-        if not __getdefaults__:
-            self.defaults = self.__class__(__getdefaults__=True)
+        # if not __getdefaults__:
+        #     self.defaults = self.__class__(__getdefaults__=True)
 
         self.job: 'Job' = None
-        self.ctx: 'PipeData' = None
         self.session: 'Session' = None
+        self.dev = True
+
 
     def __str__(self):
         # Print the values that have changed from the defaults
@@ -32,6 +33,6 @@ class JobArgs:
             if k == 'defaults': continue
             if k == 'job': continue
             if k == 'kwargs': continue
-            if v != self.defaults.__dict__.get(k, None):
-                s += f'{k}={v} '
+            # if v != self.defaults.__dict__.get(k, None):
+            #     s += f'{k}={v} '
         return s

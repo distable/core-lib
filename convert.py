@@ -1,4 +1,3 @@
-from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +25,7 @@ def save_png(pil, path, with_async=False):
     if pil is None:
         return
 
-    with trace(f'save_png({Path(path).relative_to(Path.cwd())}, async={with_async})'):
+    with trace(f'save_png({Path(path).relative_to(Path.cwd())}, async={with_async}, {pil})'):
         lpath = ensure_extension(path, '.png')
         path = Path(path)
 
@@ -65,6 +64,25 @@ def save_npy(path, nparray):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.save(str(path), nparray)
+
+
+def save_json(data, path):
+    import json
+    path = Path(path).with_suffix('.json')
+
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data, indent=4)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.as_posix(), 'w') as w:
+        w.write(data)
+
+
+def load_json(path):
+    import json
+    path = Path(path).with_suffix('.json')
+    with open(path.as_posix(), 'r') as r:
+        return json.load(r)
 
 
 def load_pil(path: Image.Image | Path | str, size=None):

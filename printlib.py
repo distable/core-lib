@@ -1,15 +1,16 @@
 import sys
+import time
 import traceback
 from contextlib import contextmanager
 from time import perf_counter
 
 import torch
 
-print_timing = True
-print_trace = True
-print_gputrace = True
+print_timing = False
+print_trace = False
+print_gputrace = False
 
-last_time = False
+last_time = time.time()
 
 # Set default decimal precision for printing
 torch.set_printoptions(precision=2)
@@ -120,6 +121,31 @@ def gputrace(name, vram_dt=False) -> float:
     if print_gputrace:
         print(chalk.grey(s))
 
+
+@contextmanager
+def cpuprofile(enable=True) -> float:
+    if not enable:
+        yield None
+        return
+
+    import yappi
+    yappi.clear_stats()
+    yappi.set_clock_type('cpu')
+    yappi.start()
+
+    yield None
+
+    columns = {
+        0: ("name", 80),
+        1: ("ncall", 5),
+        2: ("tsub", 8),
+        3: ("ttot", 8),
+        4: ("tavg", 8)
+    }
+    # Print and limit the number of functions to 100
+    yappi.get_func_stats().print_all(columns=columns)
+    yappi.stop()
+    input("Press Enter to continue...")
 
 # Override str method and return "PIL(w, h)" for PIL.Image.Image, otherwise regular str
 regstr = str
