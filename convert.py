@@ -42,10 +42,13 @@ def save_async(path, pil) -> None:
 
     # Use threaded lambda to save image
     def write(im) -> None:
-        if isinstance(im, np.ndarray):
-            im = cv2pil(im)
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        im.save(path, format='PNG')
+        try:
+            if isinstance(im, np.ndarray):
+                im = cv2pil(im)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            im.save(path, format='PNG')
+        except:
+            pass
 
     import threading
     t = threading.Thread(target=write, args=(pil,))

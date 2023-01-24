@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from pathlib import Path
 
@@ -124,7 +125,7 @@ def parse_frames(frames, name='none'):
 
 
 # region Leadnums
-def get_leadnum_zpad(iterator=None, separator='', directory=None):
+def get_leadnum_zpad(path=None):
     """
     Find the amount of leading zeroes for the 'leading numbers' in the directory names and return it
     e.g.:
@@ -135,44 +136,42 @@ def get_leadnum_zpad(iterator=None, separator='', directory=None):
     23_session -> 2
     48123_session -> 5
     """
-    iterator = get_dir_iter(iterator, directory)
-    if iterator is None:
-        return 0
-
     biggest = 0
     smallest = math.inf
-    for path in iterator:
-        if not Path(path).is_dir():
-            match = re.match(r"^(\d+)" + separator, Path(path).name)
-            if match is not None:
-                num = match.group(1)
-                biggest = max(biggest, len(num))
-                smallest = min(smallest, len(num))
+
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            if os.path.splitext(file)[1] in image_exts:
+                match = re.match(r"^(\d+)", file)
+                if match is not None:
+                    num = match.group(1)
+                    biggest = max(biggest, len(num))
+                    smallest = min(smallest, len(num))
 
     if smallest != biggest:
         return smallest
     return biggest
 
 
-def is_leadnum_zpadded(iterator=None, directory=None):
-    return get_leadnum_zpad(iterator, directory) >= 2
+def is_leadnum_zpadded(path=None):
+    return get_leadnum_zpad(path) >= 2
 
 
-def get_next_leadnum(iterator=None, directory=None):
-    return get_max_leadnum(iterator, directory) + 1
+def get_next_leadnum(path=None):
+    return (get_max_leadnum(path) or 0) + 1
 
 
-def get_max_leadnum(iterator=None, directory=None):
-    lo, hi = get_leadnum(iterator, directory)
+def get_max_leadnum(path=None):
+    lo, hi = get_leadnum(path)
     return hi
 
 
-def get_min_leadnum(iterator=None, directory=None):
-    lo, hi = get_leadnum(iterator, directory)
+def get_min_leadnum(path=None):
+    lo, hi = get_leadnum(path)
     return lo
 
 
-def get_leadnum(iterator=None, directory=None):
+def get_leadnum(path=None):
     """
     Find the largest 'leading number' in the directory names and return it
     e.g.:
@@ -183,21 +182,25 @@ def get_leadnum(iterator=None, directory=None):
 
     return value is 28
     """
-    if isinstance(iterator, str):
-        return find_leadnum(iterator)
-
-    iterator = get_dir_iter(iterator, directory)
-    if iterator is None:
-        return 0, 0
+    if isinstance(path, str):
+        return find_leadnum(path)
 
     smallest = math.inf
     biggest = 0
-    for path in iterator:
-        path = Path(path)
-        if not path.is_dir():
-            num = find_leadnum(name=path.name)
-            smallest = min(smallest, num)
-            biggest = max(biggest, num)
+    for parent, dirs, files in os.walk(path):
+        for file in files:
+            stem,suffix = os.path.splitext(file)
+            if suffix in image_exts:
+                try:
+                    num = int(stem)
+                    smallest = min(smallest, num)
+                    biggest = max(biggest, num)
+                except ValueError:
+                    pass
+        break
+
+    if biggest == 0 and smallest == math.inf:
+        return None, None
 
     return smallest, biggest
 
@@ -206,26 +209,27 @@ def find_leadnum(path=None, name=None):
     if name is None:
         name = Path(path).name
 
+    # Find the first number
     match = re.match(r"^(\d+)", name)
-    num = 0
     if match is not None:
-        num = int(match.group(1))
-    return num
+        return int(match.group(1))
+
+    return None
 
 
 # endregion
 
 
 # region Utilities
-def get_dir_iter(iterator, directory):
-    iterator = iterator if iterator is not None else directory.iterdir()
-    if isinstance(iterator, str):
-        iterator = Path(iterator)
-    if isinstance(iterator, Path):
-        if not iterator.exists():
-            return None
-        iterator = iterator.iterdir()
-    return iterator
+def get_image_glob(path):
+    path = Path(path)
+    l = []
+    # Add files using image_exts and os.walk
+    for parent, dirs, files in os.walk(path):
+        for file in files:
+            if os.path.splitext(file)[1] in image_exts:
+                l.append(os.path.join(parent, file))
+    return l
 
 
 # endregion
@@ -273,7 +277,10 @@ def get_script_file_path(name):
 
 def get_script_module_path(name=None):
     modpath = get_script_file_path(name)
-    return f'{scripts.name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}'
+    if scripts_name in modpath.parts:
+        return f'{scripts_name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}'
+    elif sessions_name in modpath.parts:
+        return f'{sessions_name}.{modpath.relative_to(sessions).with_suffix("").as_posix().replace("/", ".")}'
 
 
 # endregion
@@ -331,3 +338,20 @@ def file_tqdm(path, start, target, process, desc='Processing'):
 
     tq.update(target - tq.n)  # Finish the bar
     tq.close()
+
+
+def touch(path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.touch(exist_ok=True)
+
+
+def rm(path):
+    path = Path(path)
+    if path.exists():
+        path.unlink()
+
+
+def exists(dat):
+    return Path(dat).exists()

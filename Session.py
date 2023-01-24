@@ -14,7 +14,7 @@ from . import paths
 from .convert import cv2pil, load_pil, save_png
 from .JobInfo import JobInfo
 from .logs import logsession, logsession_err
-from .paths import get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
+from .paths import get_leadnum, get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
 from .printlib import cpuprofile, printerr, trace
 from ..lib.corelib import shlexproc
 
@@ -79,7 +79,9 @@ class Session:
 
         if self.dirpath.exists():
             if load:
-                self.load()
+                import jargs
+                with cpuprofile(jargs.args.profile_session_load):
+                    self.load()
         else:
             if log:
                 logsession("New session:", self.name)
@@ -102,8 +104,6 @@ class Session:
         Returns: A new session which is timestamped to now
         """
         name = datetime.now().strftime(paths.session_timestamp_format)
-        if None is None:
-            num = get_next_leadnum(directory=sessions)
         return Session(f"{prefix}{name}", log=log)
 
     @staticmethod
@@ -130,38 +130,41 @@ class Session:
         if not self.dirpath.exists():
             return
 
-        if not any(self.dirpath.iterdir()):
-            logsession(f"Loaded session {self.name} at {self.dirpath}")
-            return
-
-        leadnum = get_max_leadnum(self.dirpath)
-        if leadnum is not None:
-            self.set(self.determine_frame_path(leadnum))
-        else:
-            pass  # TODO maybe use the most recent file
-
-        logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
-
         self.suffix = self.determine_suffix()
-        self.f_first = get_min_leadnum(self.dirpath)
-        self.f_last = get_max_leadnum(self.dirpath)
+        lo,hi = get_leadnum(self.dirpath)
+        self.f_first = lo or 1
+        self.f_last = hi or 1
         self.f_exists = False
 
-        self.f_first_path = self.determine_frame_path(self.f_first)
-        self.f_last_path = self.determine_frame_path(self.f_last)
+        self.f_first_path = self.determine_frame_path(self.f_first) or 1
+        self.f_last_path = self.determine_frame_path(self.f_last) or 1
         self.f_path = self.f_last_path
         self.f = self.f_last
         self.load_f()
+        self.load_file()
 
         # TODO load a session metadata file
+
+        if not any(self.dirpath.iterdir()):
+            logsession(f"Loaded session {self.name} at {self.dirpath}")
+        else:
+            logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
 
     def load_f(self, f=None):
         f = f or self.f
 
+        self.f = f
         self.f_path = self.f_last_path
         self.file = self.get_frame_name(self.f)
-        if self.f < self.f_last:
+        self.f_exists = False
+        if self.f <= self.f_last:
             self.f_exists = self.load_file()
+
+        # if f is not None:
+        #     self.set(self.determine_frame_path(f))
+        # else:
+        #     pass  # TODO maybe use the most recent file
+
 
     def load_file(self):
         file = self.dirpath / self.file
@@ -283,14 +286,18 @@ class Session:
         from PIL import ImageFile
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+        if dat is None:
+            return
+
         # Image output is moved into the context
         with trace(f"session.set({dat.shape if isinstance(dat, np.ndarray) else dat})"):
             if isinstance(dat, Image.Image):
                 self._image = dat
                 self._image_cv2 = None
             elif isinstance(dat, str) or isinstance(dat, Path):
-                self._image = Image.open(dat)
-                self.file = dat
+                if paths.exists(dat):
+                    self._image = Image.open(dat)
+                    self.file = dat
             elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
                 printerr("Multiple images in set_image data, using first")
                 self._image = dat[0]
@@ -303,11 +310,11 @@ class Session:
             if not self.height: self.height = self._image.height
 
             # Resize image to match context size
-            if self._image and (self.width != self._image.width or self.height != self._image.height):
-                self._image = self._image.resize((self.width, self.height), Image.BICUBIC)
-
-            if self._image.mode != "RGB":
-                self._image = self._image.convert("RGB")
+            # if self._image and (self.width != self._image.width or self.height != self._image.height):
+            #     self._image = self._image.resize((self.width, self.height), Image.BICUBIC)
+            #
+            # if self._image.mode != "RGB":
+            #     self._image = self._image.convert("RGB")
 
     def save(self, path=None):
         if not path and self.file:
@@ -318,9 +325,9 @@ class Session:
         if not Path(path).is_absolute():
             path = self.dirpath / path
 
-        save_num = paths.get_leadnum(path)
-        if save_num > self.f_last: self.f_last = save_num
-        if save_num < self.f_first: self.f_first = save_num
+        save_num = paths.find_leadnum(path)
+        if save_num is not None and save_num > self.f_last: self.f_last = save_num
+        if save_num is not None and save_num < self.f_first: self.f_first = save_num
 
         if self._image_cv2 is not None:
             self._image = cv2pil(self._image_cv2)
@@ -328,7 +335,7 @@ class Session:
         path = Path(path)
         if isinstance(self._image, Image.Image):
             path = path.with_suffix(".png")
-            save_png(self._image, path, with_async=True)
+            save_png(self._image, path, with_async=False)
         else:
             printerr(f"Cannot save {self._image} to {path}")
 
@@ -357,7 +364,7 @@ class Session:
         else:
             return {}
 
-    def seek(self, i=None, prints=True):
+    def seek(self, i=None, log=True):
         if i is None:
             # Seek to next
             self.f = get_next_leadnum(self.dirpath)
@@ -371,15 +378,16 @@ class Session:
 
         # self._image = None
         self.load_f()
+        self.load_file()
 
-        if prints:
+        if log:
             logsession(f"({self.name}) seek({self.f})")
 
     def seek_min(self, prints=True):
         if any(self.dirpath.iterdir()):
             # Seek to next
-            self.f = get_min_leadnum(self.dirpath)
-            self.seek(self.f, prints)
+            minlead = get_min_leadnum(self.dirpath)
+            self.seek(minlead, prints)
 
     def seek_max(self, prints=True):
         if any(self.dirpath.iterdir()):
@@ -743,7 +751,7 @@ class Session:
         from src_core import plugins
         import jargs
 
-        with cpuprofile(jargs.args.profile_run_session):
+        with cpuprofile(jargs.args.profile_session_run):
             ifo = plugins.get_job(jquery)
             if ifo is None:
                 logsession_err(f"Job {jquery} not found!")
@@ -781,14 +789,15 @@ class Session:
             with cpuprofile(jargs.args.profile_run_job):
                 ret = jobs.run(j)
 
-            jargs = j.args
-            jargs_str = {k: v for k, v in jargs.__dict__.items() if isinstance(v, (int, float, str))}
-            jargs_str = ' '.join([f'{chalk.green(k)}={chalk.white(printlib.str(v))}' for k, v in jargs_str.items()])
+            if user_conf.print_jobs:
+                jargs = j.args
+                jargs_str = {k: v for k, v in jargs.__dict__.items() if isinstance(v, (int, float, str))}
+                jargs_str = ' '.join([f'{chalk.green(k)}={chalk.white(printlib.str(v))}' for k, v in jargs_str.items()])
 
-            if isinstance(ret, np.ndarray):
-                logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(ret.shape)}")
-            else:
-                logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(printlib.str(ret))}")
+                if isinstance(ret, np.ndarray):
+                    logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(ret.shape)}")
+                else:
+                    logsession(f"{chalk.blue(j.jid)}({jargs_str}) -> {chalk.grey(printlib.str(ret))}")
             return ret
         else:
             return jobs.enqueue(j)

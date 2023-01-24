@@ -4,6 +4,7 @@ import traceback
 from contextlib import contextmanager
 from time import perf_counter
 
+import numpy as np
 import torch
 
 print_timing = False
@@ -14,6 +15,7 @@ last_time = time.time()
 
 # Set default decimal precision for printing
 torch.set_printoptions(precision=2)
+np.set_printoptions(precision=2, suppress=True)
 
 
 # stdout = sys.stdout
@@ -100,7 +102,7 @@ def make_printerr(module_name):
 def trace(name) -> float:
     start = perf_counter()
     yield lambda: perf_counter() - start
-    s = f'{name}: {perf_counter() - start:.3f}s'
+    s = f'({perf_counter() - start:.3f}s) {name}'
     from yachalk import chalk
     if print_trace:
         print(chalk.grey(s))
@@ -146,6 +148,14 @@ def cpuprofile(enable=True) -> float:
     yappi.get_func_stats().print_all(columns=columns)
     yappi.stop()
     input("Press Enter to continue...")
+
+def trace_decorator(func):
+    def wrapper(*args, **kwargs):
+        s = ', '.join([str(a) for a in args] + [f'{k}={v}' for k, v in kwargs.items()])
+        with trace(f'{func.__name__}({s})'):
+            return func(*args, **kwargs)
+
+    return wrapper
 
 # Override str method and return "PIL(w, h)" for PIL.Image.Image, otherwise regular str
 regstr = str
