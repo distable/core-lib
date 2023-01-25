@@ -74,16 +74,24 @@ def save_json(data, path):
     path = Path(path).with_suffix('.json')
 
     if isinstance(data, dict) or isinstance(data, list):
-        data = json.dumps(data, indent=4)
+        # data = json.dumps(data, indent=4, sort_keys=True)
+        data = json.dumps(data)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.as_posix(), 'w') as w:
         w.write(data)
 
 
-def load_json(path):
+def load_json(path, default='required'):
     import json
+
     path = Path(path).with_suffix('.json')
+    if not path.is_file():
+        if default == 'required':
+            raise FileNotFoundError(f'File not found: {path}')
+        else:
+            return default
+
     with open(path.as_posix(), 'r') as r:
         return json.load(r)
 

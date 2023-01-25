@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import shutil
@@ -7,11 +8,12 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from munch import Munch
 from PIL import Image
 from tqdm import tqdm
 
 from . import paths
-from .convert import cv2pil, load_pil, save_png
+from .convert import cv2pil, load_json, load_pil, save_json, save_png
 from .JobInfo import JobInfo
 from .logs import logsession, logsession_err
 from .paths import get_leadnum, get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
@@ -42,10 +44,12 @@ class Session:
     def __init__(self, name_or_abspath, load=True, fixpad=False, log=True):
         self.jobs = []
         self.args = dict()
+        self.data = Munch()
 
         self.processing_thread = None
         self.cancel_processing = False
         self.dev = False
+        self.disable_jobs = False
 
         # Context properties
         self.prompt = ''
@@ -131,7 +135,7 @@ class Session:
             return
 
         self.suffix = self.determine_suffix()
-        lo,hi = get_leadnum(self.dirpath)
+        lo, hi = get_leadnum(self.dirpath)
         self.f_first = lo or 1
         self.f_last = hi or 1
         self.f_exists = False
@@ -143,7 +147,12 @@ class Session:
         self.load_f()
         self.load_file()
 
-        # TODO load a session metadata file
+        # Save the session data
+        self.data = load_json(self.dirpath / "session.json", None)
+        if self.data:
+            self.data = Munch(self.data)
+        else:
+            self.data = Munch()
 
         if not any(self.dirpath.iterdir()):
             logsession(f"Loaded session {self.name} at {self.dirpath}")
@@ -296,8 +305,11 @@ class Session:
                 self._image_cv2 = None
             elif isinstance(dat, str) or isinstance(dat, Path):
                 if paths.exists(dat):
-                    self._image = Image.open(dat)
-                    self.file = dat
+                    import cv2
+                    self._image_cv2 = cv2.imread(dat.as_posix())
+                    self._image_cv2 = self._image_cv2[..., ::-1]
+                    # self._image = Image.open(dat)
+                    # self.file = dat
             elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
                 printerr("Multiple images in set_image data, using first")
                 self._image = dat[0]
@@ -315,6 +327,39 @@ class Session:
             #
             # if self._image.mode != "RGB":
             #     self._image = self._image.convert("RGB")
+
+
+    def set_frame_data(self, key, v):
+        f = self.f - 1
+        if not key in self.data:
+            self.data[key] = []
+
+        # Make sure the list is long enough for self.f
+        while len(self.data[key]) <= f:
+            self.data[key].append(None)
+
+        if isinstance(v, bool):
+            v = int(v)
+
+        self.data[key][f] = v
+
+    def has_frame_data(self, key):
+        f = self.f - 1
+        if not key in self.data: return False
+        if f >= len(self.data[key]): return False
+        if self.data[key][f] is None: return False
+
+        v = self.data[key][f]
+        if isinstance(v, list) and len(v) == 0:return False
+
+        return True
+
+    def get_frame_data(self, key):
+        f = self.f - 1
+        if key in self.data and f < len(self.data[key]):
+            return self.data[key][f]
+
+        return 0
 
     def save(self, path=None):
         if not path and self.file:
@@ -341,14 +386,14 @@ class Session:
 
         self.file = path.name
 
-        logsession(f"Save {path}")
+        # Save the session data
+        self.save_data()
+
+        logsession(f"session.save({path})")
         return self
 
-    def add_job(self, j):
-        self.jobs.append(j)
-
-    def rem_job(self, j):
-        self.jobs.remove(j)
+    def save_data(self):
+        save_json(self.data, self.dirpath / "session.json")
 
     def add_kwargs(self, ifo: JobInfo, kwargs):
         key = ifo.get_groupclass()
@@ -384,13 +429,13 @@ class Session:
             logsession(f"({self.name}) seek({self.f})")
 
     def seek_min(self, prints=True):
-        if any(self.dirpath.iterdir()):
+        if self.dirpath.exists() and any(self.dirpath.iterdir()):
             # Seek to next
             minlead = get_min_leadnum(self.dirpath)
             self.seek(minlead, prints)
 
     def seek_max(self, prints=True):
-        if any(self.dirpath.iterdir()):
+        if self.dirpath.exists() and any(self.dirpath.iterdir()):
             self.f = get_max_leadnum(self.dirpath)
             self.seek(self.f, prints)
 
@@ -570,7 +615,7 @@ class Session:
         frameargs1 = ['-start_number', str(max(skip, self.f_first + skip))]
         frameargs2 = []
         if frames is not None:
-            name, lo, hi = self.parse_frames(name, frames)
+            lo, hi, name = self.parse_frames(frames, name)
             print(f'Frame range: {lo} : {hi}')
             frameargs1 = ['-start_number', str(lo)]
             frameargs2 = ['-frames:v', str(hi - lo + 1)]
@@ -602,7 +647,6 @@ class Session:
 
         return out
 
-
     def make_archive(self, frames=None, archive_type='zip', bg=False):
         if self.processing_thread is not None:
             self.cancel_processing = True
@@ -612,6 +656,9 @@ class Session:
         zipfile = self.dirpath / 'frames.zip'
         self.processing_thread = threading.Thread(target=self._make_archive, args=(zipfile, frames, archive_type))
         self.processing_thread.start()
+
+        if not bg:
+            self.processing_thread.join()
 
     def _make_archive(self, zipfile, frames, archive_type):
         for f in self.dirpath.glob(f'*{self.suffix}'):
@@ -623,7 +670,7 @@ class Session:
                 if frames is None:
                     ok = True
                 else:
-                    n, lo, hi = self.parse_frames('', frames)
+                    lo, hi, n = self.parse_frames(frames, '')
                     ok = lo <= int(f.stem) <= hi
                 if ok:
                     code = -1
@@ -664,7 +711,6 @@ class Session:
         paths.remap(dst, lambda num: num + lo * RESOLUTION - 1)
 
         return dst
-
 
     def copy_frames(self, name, frames=None, src=None):
         RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
@@ -743,13 +789,14 @@ class Session:
             self.run(jquery, fg=fg, **kwargs)
             self.save()
 
-
     def run(self, jquery, fg=True, **kwargs):
         """
         Run a job in the context of a session.
         """
         from src_core import plugins
         import jargs
+        if self.disable_jobs:
+            return
 
         with cpuprofile(jargs.args.profile_session_run):
             ifo = plugins.get_job(jquery)
@@ -776,7 +823,7 @@ class Session:
             if j.args.h: self.height = j.args.h
 
             self.add_kwargs(ifo, plugins.get_args(jquery, kwargs, True))
-            self.add_job(j)
+            self.jobs.append(j)
 
         # run
         # ----------------------------------------
@@ -788,6 +835,8 @@ class Session:
             # logcore(f"{chalk.blue(j.jid)}(...)")
             with cpuprofile(jargs.args.profile_run_job):
                 ret = jobs.run(j)
+
+            self.jobs.remove(j)
 
             if user_conf.print_jobs:
                 jargs = j.args

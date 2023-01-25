@@ -355,3 +355,13 @@ def rm(path):
 
 def exists(dat):
     return Path(dat).exists()
+
+def iter_scripts():
+    # Iterate with os.walk
+    for parent, dirs, files in os.walk(scripts):
+        files = sorted(files, key=len)
+        if 'libs' not in parent:
+            for file in files:
+                if file.endswith(".py") and not file.startswith("__"):
+                    # Print the relative path to parent without extension
+                    yield os.path.relpath(os.path.join(parent, file), scripts)[:-3], os.path.join(parent, file)
