@@ -102,7 +102,12 @@ def make_printerr(module_name):
 def trace(name) -> float:
     start = perf_counter()
     yield lambda: perf_counter() - start
-    s = f'({perf_counter() - start:.3f}s) {name}'
+
+    seconds = perf_counter() - start
+    if seconds >= 1:
+        s = f'({seconds:.3f}s) {name}'
+    else:
+        s = f'({int(seconds*1000)}ms) {name}'
     from yachalk import chalk
     if print_trace:
         print(chalk.grey(s))

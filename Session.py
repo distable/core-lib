@@ -93,7 +93,7 @@ class Session:
         if fixpad:
             if self.dirpath.is_dir() and not is_leadnum_zpadded(self.dirpath):
                 logsession("Session directory is not zero-padded. Migrating...")
-                self.zpad(leadnum_zpad)
+                self.make_zpad(leadnum_zpad)
 
 
     def exists(self):
@@ -148,11 +148,7 @@ class Session:
         self.load_file()
 
         # Save the session data
-        self.data = load_json(self.dirpath / "session.json", None)
-        if self.data:
-            self.data = Munch(self.data)
-        else:
-            self.data = Munch()
+        self.load_data()
 
         if not any(self.dirpath.iterdir()):
             logsession(f"Loaded session {self.name} at {self.dirpath}")
@@ -174,7 +170,6 @@ class Session:
         # else:
         #     pass  # TODO maybe use the most recent file
 
-
     def load_file(self):
         file = self.dirpath / self.file
         if file.suffix in paths.image_exts:
@@ -184,6 +179,80 @@ class Session:
 
             return False
 
+
+    def load_data(self):
+        self.data = load_json(self.dirpath / "session.json", None)
+        if self.data:
+            self.data = Munch(self.data)
+        else:
+            self.data = Munch()
+
+    def save(self, path=None):
+        if not path and self.file:
+            path = self.res(self.file)
+        if not path:
+            path = self.f_path
+
+        if not Path(path).is_absolute():
+            path = self.dirpath / path
+
+        save_num = paths.find_leadnum(path)
+        if save_num is not None and save_num > self.f_last: self.f_last = save_num
+        if save_num is not None and save_num < self.f_first: self.f_first = save_num
+
+        if self._image_cv2 is not None:
+            self._image = cv2pil(self._image_cv2)
+
+        path = Path(path)
+        if isinstance(self._image, Image.Image):
+            path = path.with_suffix(".png")
+            import cv2
+            save_png(self._image, path, with_async=False)
+        else:
+            printerr(f"Cannot save {self._image} to {path}")
+
+        self.file = path.name
+
+        # Save the session data
+        self.save_data()
+
+        logsession(f"session.save({path})")
+        return self
+
+    def save_data(self):
+        self.data.fps = self.fps
+        save_json(self.data, self.dirpath / "session.json")
+
+    def delete_f(self):
+        return self.delete_frame(self.f)
+
+    def delete_frame(self, f=None):
+        # Delete the current frame
+        f = f or self.f
+        if f is None:
+            return
+
+
+        path = None
+        exists = None
+        if f == self.f:
+            # Optimization
+            exists = self.f_exists
+            path = self.f_path
+        else:
+            path = self.determine_frame_path(f)
+            exists = path.exists()
+
+
+        if exists:
+            path.unlink()
+            self.make_sequential()
+            self.load()
+
+            logsession(f"Deleted {path}")
+            return True
+
+        return False
 
     def last_prop(self, propname: str):
         for arglist in self.args:
@@ -307,7 +376,8 @@ class Session:
                 if paths.exists(dat):
                     import cv2
                     self._image_cv2 = cv2.imread(dat.as_posix())
-                    self._image_cv2 = self._image_cv2[..., ::-1]
+                    if self._image_cv2 is not None:
+                        self._image_cv2 = self._image_cv2[..., ::-1]
                     # self._image = Image.open(dat)
                     # self.file = dat
             elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
@@ -350,50 +420,19 @@ class Session:
         if self.data[key][f] is None: return False
 
         v = self.data[key][f]
-        if isinstance(v, list) and len(v) == 0:return False
+        if isinstance(v, list) and len(v) == 0: return False
 
         return True
 
-    def get_frame_data(self, key):
+    def get_frame_data(self, key, clamp=False):
         f = self.f - 1
+        if clamp and f > self.f_last:
+            f = self.f_last
         if key in self.data and f < len(self.data[key]):
             return self.data[key][f]
 
         return 0
 
-    def save(self, path=None):
-        if not path and self.file:
-            path = self.res(self.file)
-        if not path:
-            path = self.f_path
-
-        if not Path(path).is_absolute():
-            path = self.dirpath / path
-
-        save_num = paths.find_leadnum(path)
-        if save_num is not None and save_num > self.f_last: self.f_last = save_num
-        if save_num is not None and save_num < self.f_first: self.f_first = save_num
-
-        if self._image_cv2 is not None:
-            self._image = cv2pil(self._image_cv2)
-
-        path = Path(path)
-        if isinstance(self._image, Image.Image):
-            path = path.with_suffix(".png")
-            save_png(self._image, path, with_async=False)
-        else:
-            printerr(f"Cannot save {self._image} to {path}")
-
-        self.file = path.name
-
-        # Save the session data
-        self.save_data()
-
-        logsession(f"session.save({path})")
-        return self
-
-    def save_data(self):
-        save_json(self.data, self.dirpath / "session.json")
 
     def add_kwargs(self, ifo: JobInfo, kwargs):
         key = ifo.get_groupclass()
@@ -520,7 +559,7 @@ class Session:
         """
         Rename all session frame files to sequential numbers
         """
-        self.zpad()
+        self.make_zpad()
 
         files = list(self.dirpath.iterdir())
         files.sort()
@@ -592,9 +631,11 @@ class Session:
         #     current.save_next(ret)
         #     print("")
 
-    def make_video(self, fps, skip=3, bg=False, music='', music_start=0, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
+    def make_video(self, fps=None, skip=3, bg=False, music='', music_start=0, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
         # call ffmpeg to create video from image sequence in session folder
         # do not halt, run in background as a new system process
+        if fps is None:
+            fps = self.fps
 
         # Detect how many leading zeroes are in the frame files
         lzeroes = get_leadnum_zpad(self.dirpath)
@@ -634,7 +675,7 @@ class Session:
         # ----------------------------------------
         out = self.dirpath / f'{name}.mp4'
         pattern = self.dirpath / pattern_with_zeroes
-        args = ['ffmpeg', '-y', '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, *musicargs, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', out.as_posix(), '-nostats']
+        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p',  '-c:a', 'aac', '-b:a', '320k', '-shortest', out.as_posix(), '-nostats']
 
         print('')
         print(' '.join(args))
@@ -743,7 +784,7 @@ class Session:
 
         return dst
 
-    def zpad(self, zeroes=None):
+    def make_zpad(self, zeroes=None):
         """
         Pad the frame numbers with 8 zeroes
         """
@@ -759,7 +800,7 @@ class Session:
                 except:
                     pass
 
-    def unpad(self):
+    def make_nopad(self):
         """
         Remove leading zeroes from frame numbers
         """
