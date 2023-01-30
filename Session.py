@@ -156,14 +156,15 @@ class Session:
             logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
 
     def load_f(self, f=None):
-        f = f or self.f
+        with trace("load_f"):
+            f = f or self.f
 
-        self.f = f
-        self.f_path = self.f_last_path
-        self.file = self.get_frame_name(self.f)
-        self.f_exists = False
-        if self.f <= self.f_last:
-            self.f_exists = self.load_file()
+            self.f = f
+            self.f_path = self.f_last_path
+            self.file = self.get_frame_name(self.f)
+            self.f_exists = False
+            if self.f <= self.f_last:
+                self.f_exists = self.load_file()
 
         # if f is not None:
         #     self.set(self.determine_frame_path(f))
@@ -171,13 +172,14 @@ class Session:
         #     pass  # TODO maybe use the most recent file
 
     def load_file(self):
-        file = self.dirpath / self.file
-        if file.suffix in paths.image_exts:
-            if file.exists():
-                self.set(file)
-                return True
+        with trace("load_file"):
+            file = self.dirpath / self.file
+            if file.suffix in paths.image_exts:
+                if file.exists():
+                    self.set(file)
+                    return True
 
-            return False
+                return False
 
 
     def load_data(self):

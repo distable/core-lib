@@ -63,6 +63,9 @@ def pct(f: float):
     """
     Get a constant percentage string, e.g. 23% instead of 0.23, 04% instead of 0.04
     """
+    if np.isnan(f):
+        return 'nan%'
+
     return f'{int(f * 100):02d}%'
 
 
