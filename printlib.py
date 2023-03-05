@@ -34,6 +34,30 @@ def run(code, task):
         print(traceback.format_exc(), file=sys.stderr)
 
 
+
+
+def kprint(*kargs):
+    s = ""
+    for v in kargs:
+        s += f"{v}  "
+
+    print(s)
+
+
+def printkw(**kwargs):
+    s = ""
+    for k, v in kwargs.items():
+        # idk why we have to check for bools or if its even required, not gonna question it I have better things to do like actually getting stuff done
+        if isinstance(v, (float, complex)) and not isinstance(v, bool):
+            s += f"{k}={v:.2f}  "
+        elif isinstance(v, int) and not isinstance(v, bool):
+            s += f"{k}={v}  "
+        else:
+            s += f"{k}={v}  "
+
+    print(s)
+
+
 _print = print
 
 

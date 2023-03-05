@@ -70,6 +70,7 @@ class Session:
         self.f_last_path = ''
         self.suffix = ''
 
+
         if Path(name_or_abspath).is_absolute():
             self.dirpath = Path(name_or_abspath)
             self.name = Path(name_or_abspath).stem
@@ -80,6 +81,8 @@ class Session:
             self.valid = False
             logsession_err("Cannot create session! No name or path given!")
             return
+
+        # self.dirpath = self.dirpath.resolve()
 
         if self.dirpath.exists():
             if load:
@@ -136,12 +139,12 @@ class Session:
 
         self.suffix = self.determine_suffix()
         lo, hi = get_leadnum(self.dirpath)
-        self.f_first = lo or 1
-        self.f_last = hi or 1
+        self.f_first = lo or 0
+        self.f_last = hi or 0
         self.f_exists = False
 
-        self.f_first_path = self.determine_frame_path(self.f_first) or 1
-        self.f_last_path = self.determine_frame_path(self.f_last) or 1
+        self.f_first_path = self.determine_frame_path(self.f_first) or 0
+        self.f_last_path = self.determine_frame_path(self.f_last) or 0
         self.f_path = self.f_last_path
         self.f = self.f_last
         self.load_f()
@@ -160,11 +163,13 @@ class Session:
             f = f or self.f
 
             self.f = f
+
             self.f_path = self.f_last_path
             self.file = self.get_frame_name(self.f)
             self.f_exists = False
             if self.f <= self.f_last:
                 self.f_exists = self.load_file()
+
 
         # if f is not None:
         #     self.set(self.determine_frame_path(f))
@@ -427,9 +432,11 @@ class Session:
         return True
 
     def get_frame_data(self, key, clamp=False):
-        f = self.f - 1
-        if clamp and f > self.f_last:
+        f = self.f
+        if clamp and self.f > self.f_last:
             f = self.f_last
+
+        f -= 1
         if key in self.data and f < len(self.data[key]):
             return self.data[key][f]
 
@@ -557,9 +564,15 @@ class Session:
 
         return ret
 
-    def make_sequential(self):
+    def make_sequential(self, *, fill=False):
         """
         Rename all session frame files to sequential numbers
+
+        Args:
+            fill: Create new frames by copying the last framem, do not rename anything.
+
+        Returns:
+
         """
         self.make_zpad()
 
@@ -590,6 +603,37 @@ class Session:
                     src = file
                     dst = file.with_stem(file.stem[2:])
                     shutil.move(src, dst)
+
+    def make_full(self):
+        """
+        Fill missing frames by copying the last frame.
+        """
+        # track an index
+        # For each frame
+        #   if the frame exists, advance and continue
+        #   otherwise create a new frame by copying the last frame
+
+        self.make_zpad()
+
+        files = list(self.dirpath.iterdir())
+        files.sort()
+        i = 1
+        last = None
+        for file in files:
+            try:
+                v = int(file.stem)
+                # Fill missing frames
+                for j in range(i+1, v):
+                    shutil.copy(last, self.determine_frame_path(j))
+                    print(f'Fill {j} / {last} -> {self.determine_frame_path(j)}')
+                i = v
+                last = file
+            except:
+                pass
+
+
+
+
 
     def extract_frames(self, src, nth_frame=1, frames: tuple | None = None, w=None, h=None, overwrite=False) -> Path | str | None:
         src = self.res(src)
@@ -633,7 +677,7 @@ class Session:
         #     current.save_next(ret)
         #     print("")
 
-    def make_video(self, fps=None, skip=3, bg=False, music='', music_start=0, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
+    def make_video(self, fps=None, skip=3, bg=False, music='', music_start=None, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
         # call ffmpeg to create video from image sequence in session folder
         # do not halt, run in background as a new system process
         if fps is None:
@@ -646,10 +690,6 @@ class Session:
         if lzeroes >= 2:
             pattern_with_zeroes = f'%0{lzeroes}d{self.suffix}'
 
-        musicargs = []
-        if music:
-            musicargs = ['-ss', str(music_start), '-i', music]
-
         name = 'video'
         vf = ''
 
@@ -657,11 +697,23 @@ class Session:
         # ----------------------------------------
         frameargs1 = ['-start_number', str(max(skip, self.f_first + skip))]
         frameargs2 = []
+        lo = 0
+        hi = 0
         if frames is not None:
             lo, hi, name = self.parse_frames(frames, name)
             print(f'Frame range: {lo} : {hi}')
             frameargs1 = ['-start_number', str(lo)]
             frameargs2 = ['-frames:v', str(hi - lo + 1)]
+
+        # Music
+        # ---------------------------------------e-
+        if music_start is None:
+            music_start = lo
+
+        musicargs = []
+        if music:
+            music_start = f'{music_start / fps:0.2f}'
+            musicargs = ['-ss', str(music_start), '-i', self.res(music).as_posix()]
 
         # VF filters
         # ----------------------------------------

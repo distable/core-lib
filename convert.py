@@ -84,16 +84,23 @@ def save_json(data, path):
 
 def load_json(path, default='required'):
     import json
+    is_required = default == 'required'
 
     path = Path(path).with_suffix('.json')
     if not path.is_file():
-        if default == 'required':
+        if is_required:
             raise FileNotFoundError(f'File not found: {path}')
         else:
             return default
 
-    with open(path.as_posix(), 'r') as r:
-        return json.load(r)
+    try:
+        with open(path.as_posix(), 'r') as r:
+            return json.load(r)
+    except Exception as e:
+        if is_required:
+            raise e
+        else:
+            return default
 
 
 def load_pil(path: Image.Image | Path | str, size=None):
