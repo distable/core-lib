@@ -13,6 +13,7 @@ from PIL import Image
 from tqdm import tqdm
 
 import jargs
+from src_plugins.disco_party.maths import clamp
 from . import paths
 from .convert import cv2pil, load_json, load_pil, save_json, save_png
 from .JobInfo import JobInfo
@@ -252,12 +253,20 @@ class Session:
             exists = path.exists()
 
         if exists:
-            path.unlink()
-            self.make_sequential()
-            self.load()
+            if f == self.f:
+                path.unlink()
+                self.f = clamp(self.f - 1, 0, self.f_last)
+                self.f_last = self.f or 0
+                self.f_last_path = self.det_frame_path(self.f_last) or 0
+                self.load_f()
+            else:
+                # Offset all frames after to make sequential
+                path.unlink()
+                self.make_sequential()
+                self.load()
 
-            logsession(f"Deleted {path}")
-            return True
+                logsession(f"Deleted {path}")
+                return True
 
         return False
 
