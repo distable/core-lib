@@ -277,6 +277,7 @@ def get_script_file_path(name):
 
 def get_script_module_path(name=None):
     modpath = get_script_file_path(name)
+
     # Decide if the script is in the scripts folder or part of the session
     if scripts_name in modpath.parts:
         return f'{scripts_name}.{modpath.relative_to(scripts).with_suffix("").as_posix().replace("/", ".")}'

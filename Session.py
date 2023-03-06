@@ -12,11 +12,12 @@ from munch import Munch
 from PIL import Image
 from tqdm import tqdm
 
+import jargs
 from . import paths
 from .convert import cv2pil, load_json, load_pil, save_json, save_png
 from .JobInfo import JobInfo
 from .logs import logsession, logsession_err
-from .paths import get_leadnum, get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, is_leadnum_zpadded, leadnum_zpad, parse_frames, sessions
+from .paths import get_leadnum, get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, get_script_file_path, is_leadnum_zpadded, leadnum_zpad, parse_action_script, parse_frames, sessions
 from .printlib import cpuprofile, printerr, trace
 from ..lib.corelib import shlexproc
 
@@ -69,7 +70,6 @@ class Session:
         self.f_first_path = ''
         self.f_last_path = ''
         self.suffix = ''
-
 
         if Path(name_or_abspath).is_absolute():
             self.dirpath = Path(name_or_abspath)
@@ -137,14 +137,14 @@ class Session:
         if not self.dirpath.exists():
             return
 
-        self.suffix = self.determine_suffix()
+        self.suffix = self.det_suffix()
         lo, hi = get_leadnum(self.dirpath)
         self.f_first = lo or 0
         self.f_last = hi or 0
         self.f_exists = False
 
-        self.f_first_path = self.determine_frame_path(self.f_first) or 0
-        self.f_last_path = self.determine_frame_path(self.f_last) or 0
+        self.f_first_path = self.det_frame_path(self.f_first) or 0
+        self.f_last_path = self.det_frame_path(self.f_last) or 0
         self.f_path = self.f_last_path
         self.f = self.f_last
         self.load_f()
@@ -194,6 +194,8 @@ class Session:
         else:
             self.data = Munch()
 
+        self.fps = self.data.get("fps", self.fps)
+
     def save(self, path=None):
         if not path and self.file:
             path = self.res(self.file)
@@ -239,7 +241,6 @@ class Session:
         if f is None:
             return
 
-
         path = None
         exists = None
         if f == self.f:
@@ -247,9 +248,8 @@ class Session:
             exists = self.f_exists
             path = self.f_path
         else:
-            path = self.determine_frame_path(f)
+            path = self.det_frame_path(f)
             exists = path.exists()
-
 
         if exists:
             path.unlink()
@@ -327,7 +327,7 @@ class Session:
     def get_current_frame_name(self):
         return self.get_frame_name(self.f)
 
-    def determine_frame_path(self, f, subdir='', suffix=None):
+    def det_frame_path(self, f, subdir='', suffix=None):
         if suffix is not None:
             p1 = (self.dirpath / subdir / str(f)).with_suffix(suffix)
             p2 = (self.dirpath / subdir / str(f).zfill(8)).with_suffix(suffix)
@@ -335,37 +335,38 @@ class Session:
             return p2  # padded is now the default
         else:
             if self.suffix:
-                return self.determine_frame_path(f, subdir, self.suffix)
+                return self.det_frame_path(f, subdir, self.suffix)
 
-            jpg = self.determine_frame_path(f, subdir, '.jpg')
-            png = self.determine_frame_path(f, subdir, '.png')
+            jpg = self.det_frame_path(f, subdir, '.jpg')
+            png = self.det_frame_path(f, subdir, '.png')
             if jpg.exists():
                 return jpg
             else:
                 return png
 
-    def determine_suffix(self, f=None):
+
+    def det_suffix(self, f=None):
         if f is None:
-            return self.determine_suffix(self.f_first) \
-                or self.determine_suffix(self.f_last) \
-                or self.determine_suffix(1)
+            return self.det_suffix(self.f_first) \
+                or self.det_suffix(self.f_last) \
+                or self.det_suffix(1)
 
-        return self.determine_frame_path(f).suffix
+        return self.det_frame_path(f).suffix
 
-    def determine_frame_pil(self, f, subdir=''):
-        return load_pil(self.determine_frame_path(f, subdir))
+    def det_frame_pil(self, f, subdir=''):
+        return load_pil(self.det_frame_path(f, subdir))
 
-    def determine_current_frame_path(self, subdir=''):
-        return self.determine_frame_path(self.f, subdir)
+    def det_current_frame_path(self, subdir=''):
+        return self.det_frame_path(self.f, subdir)
 
-    def determine_current_frame_exists(self):
-        return self.determine_current_frame_path().is_file()
+    def det_current_frame_exists(self):
+        return self.det_current_frame_path().is_file()
 
-    def determine_f_first_path(self):
-        return self.determine_frame_path(get_min_leadnum(self.dirpath))
+    def det_f_first_path(self):
+        return self.det_frame_path(get_min_leadnum(self.dirpath))
 
-    def determine_f_last_path(self):
-        return self.determine_frame_path(get_max_leadnum(self.dirpath))
+    def det_f_last_path(self):
+        return self.det_frame_path(get_max_leadnum(self.dirpath))
 
     def set(self, dat):
         from PIL import ImageFile
@@ -405,7 +406,6 @@ class Session:
             # if self._image.mode != "RGB":
             #     self._image = self._image.convert("RGB")
 
-
     def set_frame_data(self, key, v):
         f = self.f - 1
         if not key in self.data:
@@ -441,7 +441,6 @@ class Session:
             return self.data[key][f]
 
         return 0
-
 
     def add_kwargs(self, ifo: JobInfo, kwargs):
         key = ifo.get_groupclass()
@@ -523,7 +522,7 @@ class Session:
 
         # If the resid is a number, assume it is a frame number
         if isinstance(resid, int):
-            return self.determine_frame_path(resid)
+            return self.det_frame_path(resid)
         elif resid is None:
             return self.f_path
 
@@ -564,6 +563,33 @@ class Session:
 
         return ret
 
+    def res_music(self, name='music'):
+        """
+        Get the music resource for this session, or specify by name and auto-detect extension.
+        """
+        name = name or 'music'
+        if self.exists:
+            file = self.res(f"{name}.mp3")
+            if not file.exists(): file = self.res(f"{name}.ogg")
+            if not file.exists(): file = self.res(f"{name}.wav")
+            if not file.exists(): file = self.res(f"{name}.flac")
+            if not file.exists(): raise FileNotFoundError("Could not find music file in session directory")
+            return file
+
+    def res_script(self, name='script', touch=False):
+        """
+        Get the script resource for this session, or specify by name and auto-detect extension.
+        """
+        name = name or 'script'
+        if not name.endswith('.py'):
+            name += '.py'
+
+        path = self.res(name)
+        if touch:
+            paths.touch(path)
+
+        return path
+
     def make_sequential(self, *, fill=False):
         """
         Rename all session frame files to sequential numbers
@@ -584,7 +610,7 @@ class Session:
                 try:
                     v = int(file.stem)
                     src = file
-                    dst = self.determine_frame_path(i)
+                    dst = self.det_frame_path(i)
                     print(f'Rename {src} -> {dst} / off={v - i}')
 
                     dst = dst.with_stem(f'__{dst.stem}')
@@ -623,16 +649,13 @@ class Session:
             try:
                 v = int(file.stem)
                 # Fill missing frames
-                for j in range(i+1, v):
-                    shutil.copy(last, self.determine_frame_path(j))
-                    print(f'Fill {j} / {last} -> {self.determine_frame_path(j)}')
+                for j in range(i + 1, v):
+                    shutil.copy(last, self.det_frame_path(j))
+                    print(f'Fill {j} / {last} -> {self.det_frame_path(j)}')
                 i = v
                 last = file
             except:
                 pass
-
-
-
 
 
     def extract_frames(self, src, nth_frame=1, frames: tuple | None = None, w=None, h=None, overwrite=False) -> Path | str | None:
@@ -729,7 +752,7 @@ class Session:
         # ----------------------------------------
         out = self.dirpath / f'{name}.mp4'
         pattern = self.dirpath / pattern_with_zeroes
-        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p',  '-c:a', 'aac', '-b:a', '320k', '-shortest', out.as_posix(), '-nostats']
+        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k', '-shortest', out.as_posix(), '-nostats']
 
         print('')
         print(' '.join(args))

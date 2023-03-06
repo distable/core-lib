@@ -52,6 +52,11 @@ def printkw(**kwargs):
             s += f"{k}={v:.2f}  "
         elif isinstance(v, int) and not isinstance(v, bool):
             s += f"{k}={v}  "
+        # tuple of floats
+        elif isinstance(v, tuple) and isinstance(v[0], float):
+            # convert each float to a string with 2 decimal places
+            v = tuple(f"{x:.2f}" for x in v)
+            s += f"{k}={v}  "
         else:
             s += f"{k}={v}  "
 
