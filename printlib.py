@@ -34,12 +34,10 @@ def run(code, task):
         print(traceback.format_exc(), file=sys.stderr)
 
 
-
-
 def kprint(*kargs):
     s = ""
     for v in kargs:
-        s += f"{v}  "
+        s += f"{value_to_print_str(v)}  "
 
     print(s)
 
@@ -47,18 +45,8 @@ def kprint(*kargs):
 def printkw(**kwargs):
     s = ""
     for k, v in kwargs.items():
-        # idk why we have to check for bools or if its even required, not gonna question it I have better things to do like actually getting stuff done
-        if isinstance(v, (float, complex)) and not isinstance(v, bool):
-            s += f"{k}={v:.2f}  "
-        elif isinstance(v, int) and not isinstance(v, bool):
-            s += f"{k}={v}  "
-        # tuple of floats
-        elif isinstance(v, tuple) and isinstance(v[0], float):
-            # convert each float to a string with 2 decimal places
-            v = tuple(f"{x:.2f}" for x in v)
-            s += f"{k}={v}  "
-        else:
-            s += f"{k}={v}  "
+        s += f"{value_to_print_str(k)}={value_to_print_str(v)}"
+        s += "  "
 
     print(s)
 
@@ -139,7 +127,7 @@ def trace(name) -> float:
     if seconds >= 1:
         s = f'({seconds:.3f}s) {name}'
     else:
-        s = f'({int(seconds*1000)}ms) {name}'
+        s = f'({int(seconds * 1000)}ms) {name}'
     from yachalk import chalk
     if print_trace:
         print(chalk.grey(s))
@@ -186,28 +174,53 @@ def cpuprofile(enable=True) -> float:
     yappi.stop()
     input("Press Enter to continue...")
 
+
 def trace_decorator(func):
     def wrapper(*args, **kwargs):
-        s = ', '.join([str(a) for a in args] + [f'{k}={v}' for k, v in kwargs.items()])
+        s_kargs = []
+        for a in args:
+            s_kargs.append(value_to_print_str(a))
+
+        s_kwargs = []
+        for k, v in kwargs.items():
+            s_k = value_to_print_str(k)
+            s_v = value_to_print_str(v)
+            s_kwargs.append(f'{s_k}={s_v}')
+
+        s = ', '.join(s_kargs + s_kwargs)
+
         with trace(f'{func.__name__}({s})'):
             return func(*args, **kwargs)
 
     return wrapper
 
-# Override str method and return "PIL(w, h)" for PIL.Image.Image, otherwise regular str
-regstr = str
 
-
-def str(obj):
+def value_to_print_str(v):
     from PIL import Image
-    # Simplified PIL image
-    if isinstance(obj, Image.Image):
-        return f"PIL({obj.width}x{obj.height}, {obj.mode})"
-    # Limit floats to 2 decimals
-    if isinstance(obj, float):
-        return f"{obj:.2f}"
 
-    return regstr(obj)
+    s_v = ""
+    # idk why we have to check for bools or if its even required, not gonna question it I have better things to do like actually getting stuff done
+    if isinstance(v, (float, complex)) and not isinstance(v, bool):
+        s_v = f"{v:.2f}"
+    elif isinstance(v, int) and not isinstance(v, bool):
+        s_v = f"{v}"
+    # tuple of floats
+    elif isinstance(v, tuple) and isinstance(v[0], float):
+        # convert each float to a string with 2 decimal places
+        v = tuple(f"{x:.2f}" for x in v)
+        s_v = f"{v}"
+    elif isinstance(v, np.ndarray):
+        s_v = f"ndarray{v.shape}"
+    # Simplified PIL image
+    elif isinstance(v, Image.Image):
+        s_v = f"PIL({v.width}x{v.height}, {v.mode})"
+    # Limit floats to 2 decimals
+    elif isinstance(v, float):
+        s_v = f"{v:.2f}"
+    else:
+        s_v = f"{v}"
+
+    return s_v
 
 
 progress_print_out = sys.stdout

@@ -221,8 +221,12 @@ class Session:
             path = self.dirpath / path
 
         save_num = paths.find_leadnum(path)
-        if save_num is not None and save_num > self.f_last: self.f_last = save_num
-        if save_num is not None and save_num < self.f_first: self.f_first = save_num
+        if save_num is not None and save_num > self.f_last:
+            self.f_last = save_num
+            self.f_last_path = path
+        if save_num is not None and save_num < self.f_first:
+            self.f_first = save_num
+            self.f_first_path = path
 
         if self._image_cv2 is not None:
             self._image = cv2pil(self._image_cv2)
