@@ -45,6 +45,9 @@ class Plugin:
                 # Revert our function to the original decorated func
                 setattr(self, attr, jfunc)
 
+        if len(self.jobs) == 0:
+            raise ValueError(f"Plugin {self.id} has no jobs! Did you forget @plugjob?")
+
     @property
     def short_pid(self):
         """

@@ -284,6 +284,14 @@ def get_script_module_path(name=None):
     elif sessions_name in modpath.parts:
         return f'{sessions_name}.{modpath.relative_to(sessions).with_suffix("").as_posix().replace("/", ".")}'
 
+def get_script_paths():
+    # Iterate with os.walk
+    for root, dirs, files in os.walk(scripts):
+        files = sorted(files, key=len)
+        if 'libs' not in root:
+            for file in files:
+                if file.endswith(".py") and not file.startswith("__"):
+                    yield os.path.join(root, file)
 
 # endregion
 def rmtree(path):
@@ -301,7 +309,7 @@ def remap(dst, fn):
         if f.is_file():
             try:
                 num = int(f.stem)
-                f.rename(dst / f"{fn(num)}.png")
+                f.rename(dst / f"{int(fn(num))}.png")
             except:
                 pass
 
@@ -320,6 +328,7 @@ def rmclean(path):
         shutil.rmtree(path)
 
     path.mkdir(parents=True, exist_ok=True)
+    return path
 
 def file_tqdm(path, start, target, process, desc='Processing'):
     from tqdm import tqdm

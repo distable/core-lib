@@ -89,7 +89,7 @@ class Session:
             if load:
                 import jargs
                 with cpuprofile(jargs.args.profile_session_load):
-                    self.load()
+                    self.load(log=log)
         else:
             if log:
                 logsession("New session:", self.name)
@@ -98,6 +98,9 @@ class Session:
             if self.dirpath.is_dir() and not is_leadnum_zpadded(self.dirpath):
                 logsession("Session directory is not zero-padded. Migrating...")
                 self.make_zpad(leadnum_zpad)
+
+    def __str__(self):
+        return f"Session({self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file}))"
 
 
     def exists(self):
@@ -129,7 +132,7 @@ class Session:
 
         return Session.now()
 
-    def load(self):
+    def load(self, *, log=True):
         """
         Load the session state from disk.
         If new frames have been added externally without interacting directly with a session object,
@@ -154,10 +157,11 @@ class Session:
         # Save the session data
         self.load_data()
 
-        if not any(self.dirpath.iterdir()):
-            logsession(f"Loaded session {self.name} at {self.dirpath}")
-        else:
-            logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
+        if log:
+            if not any(self.dirpath.iterdir()):
+                logsession(f"Loaded session {self.name} at {self.dirpath}")
+            else:
+                logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
 
     def load_f(self, f=None, *, clamped_load=False):
         with trace("load_f"):
@@ -340,11 +344,28 @@ class Session:
 
     @image.setter
     def image(self, value):
+        # If it's a string or path, load it
+        if isinstance(value, (str, Path)):
+            value = Image.open(value)
+
+            # Resize to fit
+            if self.width and self.height:
+                value = value.resize((self.width, self.height))
+
         self._image = value
         self._image_cv2 = None
 
     @image_cv2.setter
     def image_cv2(self, value):
+        # If it's a string or path, load it
+        if isinstance(value, (str, Path)):
+            import cv2
+            value = cv2.imread(str(value))
+
+            # resize to fit
+            if self.width and self.height:
+                value = cv2.resize(value, (self.width, self.height))
+
         self._image_cv2 = value
         self._image = None
 
@@ -526,13 +547,16 @@ class Session:
         else:
             return self
 
-    def res(self, subpath: Path | str) -> Path:
+    def res(self, subpath: Path | str, *, ext: str = None) -> Path:
         """
         Get a session resource, e.g. init video
         """
         subpath = Path(subpath)
         if subpath.is_absolute():
             return subpath
+
+        if subpath.suffix == '' and ext:
+            subpath = subpath.with_suffix('.' + ext)
 
         return self.dirpath / subpath
 
@@ -590,7 +614,7 @@ class Session:
 
         return ret
 
-    def res_music(self, name='music'):
+    def res_music(self, name='music', *, optional=False):
         """
         Get the music resource for this session, or specify by name and auto-detect extension.
         """
@@ -600,7 +624,7 @@ class Session:
             if not file.exists(): file = self.res(f"{name}.ogg")
             if not file.exists(): file = self.res(f"{name}.wav")
             if not file.exists(): file = self.res(f"{name}.flac")
-            if not file.exists(): raise FileNotFoundError("Could not find music file in session directory")
+            if not file.exists() and not optional: raise FileNotFoundError("Could not find music file in session directory")
             return file
 
     def res_script(self, name='script', touch=False):
@@ -686,7 +710,7 @@ class Session:
 
 
     def extract_frames(self, src, nth_frame=1, frames: tuple | None = None, w=None, h=None, overwrite=False) -> Path | str | None:
-        src = self.res(src)
+        src = self.res(src, ext='mp4')
 
         lo, hi, name = self.parse_frames(frames, src.stem)
 
@@ -727,7 +751,7 @@ class Session:
         #     current.save_next(ret)
         #     print("")
 
-    def make_video(self, fps=None, skip=3, bg=False, music='', music_start=None, frames=None, fade_in=.5, fade_out=1.25, w=None, h=None):
+    def make_video(self, fps=None, skip=3, bg=False, music='', music_start=None, frames=None, fade_in=.0, fade_out=.0, w=None, h=None, bv=None, ba='320k'):
         # call ffmpeg to create video from image sequence in session folder
         # do not halt, run in background as a new system process
         if fps is None:
@@ -756,7 +780,7 @@ class Session:
             frameargs2 = ['-frames:v', str(hi - lo + 1)]
 
         # Music
-        # ---------------------------------------e-
+        # ----------------------------------------
         if music_start is None:
             music_start = lo
 
@@ -775,11 +799,24 @@ class Session:
 
         print(f"Making video at {w}x{h}")
 
+        # Bitrate
+        # ----------------------------------------
+        if bv:
+            bv = ['-b:v', bv]
+        else:
+            bv = []
+
+        if ba:
+            ba = ['-b:a', ba]
+        else:
+            ba = ''
+
+
         # Run
         # ----------------------------------------
         out = self.dirpath / f'{name}.mp4'
         pattern = self.dirpath / pattern_with_zeroes
-        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k', '-shortest', out.as_posix(), '-nostats']
+        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', *bv, *ba, '-shortest', out.as_posix(), '-nostats']
 
         print('')
         print(' '.join(args))
@@ -829,12 +866,25 @@ class Session:
             except: pass
         self.processing_thread = None
 
-    def make_rife(self, frames=None, name=None, scale=2):
-        RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
+    def make_rife_ncnn_vulkan(self, frames=None, name=None, scale=None, fps=None):
+        """
+        This invokes the rife-ncnn-vulkan executable to interpolate frames in the current session folder.
+        Linux only.
+        """
+
+        # How much interpolation (2 == twice as many frames)
+        if scale:
+            RESOLUTION = scale
+        elif fps:
+            RESOLUTION = fps / self.fps
+        else:
+            RESOLUTION = 2
 
         lo, hi, name = self.parse_frames(frames, name or 'rife')
         ipath = self.dirpath
         dst = self.dirpath / name
+
+        n_frames = int((hi - lo) * RESOLUTION)
 
         print(f"make_rife({ipath}, dst={dst}, lo={lo}, hi={hi})")
 
@@ -845,7 +895,10 @@ class Session:
 
         dst = paths.rmclean(dst)
         src = self.copy_frames('rife_src', frames, ipath)
-        proc = shlexproc(f'rife-ncnn-vulkan -i {src.as_posix()} -o {dst.as_posix()}')
+        # src = ipath / 'rife_src'
+
+        # proc = shlexproc(f'rife-ncnn-vulkan -i {src.as_posix()} -o {dst.as_posix()}')
+        proc = shlexproc(f'rife-ncnn-vulkan -i {src.as_posix()} -o {dst.as_posix()} -j 3:3:3 -m rife-v4 -n {n_frames} -f jpg')
 
         paths.file_tqdm(dst,
                         start=0,
@@ -858,13 +911,16 @@ class Session:
         return dst
 
     def copy_frames(self, name, frames=None, src=None):
-        RESOLUTION = 2  # How much interpolation (2 == twice as many frames)
-
         name = name
         lo, hi, name = self.parse_frames(frames, name)
 
         src = src or self.dirpath
         dst = self.res(name)
+
+        if dst.exists():
+            num_files = len(list(dst.iterdir()))
+            if num_files == hi - lo:
+                return dst
 
         paths.rmclean(dst)
 
