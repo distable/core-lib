@@ -25,29 +25,6 @@ class Plugin:
             if self.id.endswith(suffix):
                 self.id = self.id[:-len(suffix)]
 
-        # Discover PlugjobDecos to register our jobs
-        for attr in dir(self):
-            deco = getattr(self, attr)
-            if isinstance(deco, PlugjobDeco):
-                jname = attr
-                jfunc = deco.func
-
-                # Register job
-                # mprint(f"Registering {attr} job")
-                self.jobs.append(JobInfo(f'{self.id}.{jname}', jfunc, plugin=self, key=deco.key))
-
-                # Register aliases
-                # mprint(f"Registering aliases: {deco.aliases}")
-                if deco.aliases is not None:
-                    for alias in deco.aliases:
-                        self.jobs.append(JobInfo(alias, jfunc, self, is_alias=True))
-
-                # Revert our function to the original decorated func
-                setattr(self, attr, jfunc)
-
-        if len(self.jobs) == 0:
-            raise ValueError(f"Plugin {self.id} has no jobs! Did you forget @plugjob?")
-
     @property
     def short_pid(self):
         """
@@ -110,3 +87,11 @@ class Plugin:
         Unload everything from memory.
         """
         pass
+
+    @property
+    def session(self):
+        """
+        Returns: The current session object
+        """
+        from src_core.rendering import renderer
+        return renderer.session

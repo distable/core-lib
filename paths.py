@@ -1,12 +1,13 @@
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very robust
 
 scripts_name = 'scripts'
-userconf_name = 'user_conf.py'
+userconf_name = 'userconf.py'
 plug_res_name = 'plug-res'
 src_core_name = 'src_core'
 src_plugins_name = 'src_plugins'
@@ -52,6 +53,7 @@ plugin_suffixes = ['_plugin']
 
 video_exts = ['.mp4', '.mov', '.avi', '.mkv']
 image_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
+audio_exts = ['.wav', '.mp3', '.ogg', '.flac', '.aac']
 
 leadnum_zpad = 8
 
@@ -234,7 +236,7 @@ def get_image_glob(path):
 
 # endregion
 
-def get_first_match(path: str | Path, suffix: str | None = None, name: str | None = None):
+def get_first_match(path, suffix, name = None):
     path = Path(path)
     if not path.exists():
         return None
@@ -257,12 +259,12 @@ def parse_action_script(s, default=None):
     script:action
     """
     if s is None:
-        return None, None
+        return None, default
 
     v = s.split(':')
 
     action = v[0]
-    script = default
+    script = None
 
     if len(v) > 1:
         action = v[1]
@@ -362,6 +364,12 @@ def rm(path):
     path = Path(path)
     if path.exists():
         path.unlink()
+
+def cp(path1, path2):
+    path1 = Path(path1)
+    path2 = Path(path2)
+    if path1.exists():
+        shutil.copy(path1, path2)
 
 
 def exists(dat):

@@ -123,4 +123,17 @@ def load_pil(path: Image.Image | Path | str, size=None):
 
 def load_pilarr(pil, size=None):
     pil = load_pil(pil, size)
-    return np.array(pil.convert('RGB'))
+    pil = pil.convert('RGB')
+    return np.array(pil)
+
+def load_cv2(pil, size=None):
+    ret = None
+
+    if isinstance(pil, np.ndarray): ret = pil
+    if isinstance(pil, Image.Image): ret = pil2cv(pil)
+    if isinstance(pil, Path): ret = pil2cv(Image.open(pil.as_posix()))
+    if isinstance(pil, str) and Path(pil).is_file(): ret = cv2.imread(pil)
+    if isinstance(pil, str) and pil.startswith('#'):
+        rgb = Image.new('RGB', size or (1, 1), color=pil)
+        rgb = rgb.convert('RGB')
+        ret = np.asarray(rgb)

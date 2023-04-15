@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import numpy as np
 from munch import Munch
 from PIL import Image
@@ -88,7 +89,7 @@ class Session:
         if self.dirpath.exists():
             if load:
                 import jargs
-                with cpuprofile(jargs.args.profile_session_load):
+                with cpuprofile(jargs.args.trace_session_load):
                     self.load(log=log)
         else:
             if log:
@@ -507,7 +508,8 @@ class Session:
     def seek(self, i=None, log=True):
         if i is None:
             # Seek to next
-            self.f = get_next_leadnum(self.dirpath)
+            # self.f = get_next_leadnum(self.dirpath)
+            self.f = self.f_last + 1
         elif isinstance(i, int):
             # Seek to i
             i = max(i, 1)  # Frames start a 1
@@ -606,6 +608,21 @@ class Session:
                     return file
 
         return None
+
+    def res_frame_cv2(self, resid, subdir='', ext=None, loop=False):
+        frame_path = self.res_frame(resid, subdir, ext, loop)
+        if frame_path is None:
+            return None
+
+        # resize to fit
+        ret = cv2.imread(str(frame_path))
+        if self.width and self.height:
+            ret = cv2.resize(ret, (self.width, self.height))
+
+        return ret
+
+
+
 
     def res_framepil(self, name, subdir='', ext=None, loop=False, ctxsize=False):
         ret = load_pil(self.res_frame(name, subdir, ext, loop))
@@ -708,6 +725,21 @@ class Session:
             except:
                 pass
 
+    def extract_init(self, name='init'):
+        self.extract_frames(name)
+        self.extract_music(name)
+
+    def extract_music(self, src='init', overwrite=False):
+        input = self.res(src, ext="mp4")
+        output = self.res(f"{src}.wav")
+        cmd = f'ffmpeg -i {input} -acodec pcm_s16le -ac 1 -ar 44100 {output}'
+        if output.exists():
+            if not overwrite:
+                print(f"Music extraction already exists for {input.name}, skipping ...")
+                return
+            paths.rm(input)
+
+        os.system(cmd)
 
     def extract_frames(self, src, nth_frame=1, frames: tuple | None = None, w=None, h=None, overwrite=False) -> Path | str | None:
         src = self.res(src, ext='mp4')
@@ -811,12 +843,11 @@ class Session:
         else:
             ba = ''
 
-
         # Run
         # ----------------------------------------
         out = self.dirpath / f'{name}.mp4'
         pattern = self.dirpath / pattern_with_zeroes
-        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', *bv, *ba, '-shortest', out.as_posix(), '-nostats']
+        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', *bv, *ba, out.as_posix(), '-nostats']
 
         print('')
         print(' '.join(args))
@@ -999,7 +1030,7 @@ class Session:
         if self.disable_jobs:
             return
 
-        with cpuprofile(jargs.args.profile_session_run):
+        with cpuprofile(jargs.args.trace_session_run):
             ifo = plugins.get_job(jquery)
             if ifo is None:
                 logsession_err(f"Job {jquery} not found!")
@@ -1014,8 +1045,8 @@ class Session:
             j.session = self
             j.on_done = on_done
 
-            import user_conf
-            if self.dev and jquery in user_conf.forbidden_dev_jobs:
+            import userconf
+            if self.dev and jquery in userconf.forbidden_dev_jobs:
                 return None
 
             # Store the prompt into ctx data
@@ -1034,12 +1065,12 @@ class Session:
 
         if fg:
             # logcore(f"{chalk.blue(j.jid)}(...)")
-            with cpuprofile(jargs.args.profile_run_job):
+            with cpuprofile(jargs.args.trace_run_job):
                 ret = jobs.run(j)
 
             self.jobs.remove(j)
 
-            if user_conf.print_jobs:
+            if userconf.print_jobs:
                 jargs = j.args
                 jargs_str = {k: v for k, v in jargs.__dict__.items() if isinstance(v, (int, float, str))}
                 jargs_str = ' '.join([f'{chalk.green(k)}={chalk.white(printlib.str(v))}' for k, v in jargs_str.items()])
