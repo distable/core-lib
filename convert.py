@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -22,6 +23,8 @@ def ensure_extension(path: str | Path, ext):
 
 
 def save_png(pil, path, with_async=False):
+    pil = load_pil(pil)
+
     if pil is None:
         return
 
@@ -110,6 +113,7 @@ def load_pil(path: Image.Image | Path | str, size=None):
     if isinstance(path, Path): ret = Image.open(path.as_posix())
     if isinstance(path, str) and Path(path).is_file(): ret = Image.open(path)
     if isinstance(path, str) and path.startswith('#'): ret = Image.new('RGB', size or (1, 1), color=path)
+    if isinstance(path, np.ndarray): ret = cv2pil(path)
 
     if ret is None:
         raise ValueError(f'Unknown type of path: {type(path)}')
@@ -130,10 +134,45 @@ def load_cv2(pil, size=None):
     ret = None
 
     if isinstance(pil, np.ndarray): ret = pil
-    if isinstance(pil, Image.Image): ret = pil2cv(pil)
-    if isinstance(pil, Path): ret = pil2cv(Image.open(pil.as_posix()))
-    if isinstance(pil, str) and Path(pil).is_file(): ret = cv2.imread(pil)
-    if isinstance(pil, str) and pil.startswith('#'):
+    elif isinstance(pil, Image.Image): ret = pil2cv(pil)
+    elif isinstance(pil, Path): ret = pil2cv(Image.open(pil.as_posix()))
+    elif isinstance(pil, str) and Path(pil).is_file(): ret = cv2.imread(pil)
+    elif isinstance(pil, str) and pil.startswith('#'):
         rgb = Image.new('RGB', size or (1, 1), color=pil)
         rgb = rgb.convert('RGB')
         ret = np.asarray(rgb)
+    elif pil == 'black':
+        ret = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    elif pil == 'white':
+        ret = np.ones((size[1], size[0], 3), dtype=np.uint8) * 255
+    else:
+        # color string like 'black', etc.
+        rgb = Image.new('RGB', size or (1, 1), color=pil)
+        rgb = rgb.convert('RGB')
+        ret = np.asarray(rgb)
+
+    if size is not None and ret.shape[:2] != size:
+        ret = cv2.resize(ret, size)
+
+
+    return ret
+
+def fit(im, width, height, background='black'):
+    # Fit image to width and height and center it
+    # The background is another cv2 image (h,w,c)
+    im = load_cv2(im, (width, height))
+    background = load_cv2(background, (width, height))
+
+    im = cv2.cvtColor(im, cv2.COLOR_RGBA2RGB)
+    background = cv2.cvtColor(background, cv2.COLOR_RGBA2RGB)
+
+    # Resize image
+    im = cv2.resize(im, (width, height))
+
+    # Get final image
+    ret = background.copy()
+
+    # Stamp image from the center
+    ret[height // 2 - im.shape[0] // 2:height // 2 + im.shape[0] // 2] = im
+
+    return ret

@@ -6,33 +6,25 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent.parent  # TODO this isn't very robust
 
-scripts_name = 'scripts'
-userconf_name = 'userconf.py'
+src_core_name = 'src_core'  # conflict with package names, must be underscore
+src_plugins_name = 'src_plugins'  # conflict with package names, must be underscore
 plug_res_name = 'plug-res'
-src_core_name = 'src_core'
-src_plugins_name = 'src_plugins'
+plug_repos_name = 'plug_repos'
+
+userconf_name = 'userconf.py'
+scripts_name = 'scripts'
 sessions_name = 'sessions'
+tmp_name = 'tmp'
 
-# Code for the core
-code_core = root / src_core_name  # conflict with package names, must be prefixed differently here
 
-# Downloaded plugin source code
-code_plugins = root / src_plugins_name  # conflict with package names, must be prefixed differently here
-
-# Contains the user's downloaded plugins (cloned from github)
-plugins = root / 'src_plugins'
-
-# User project scripts to run
-scripts = root / 'scripts'
-
-# Contains the resources for each plugin, categorized by plugin id
-plug_res = root / plug_res_name
-
-# Contains the logs output by each plugin, categorized by plugin id
-plug_logs = root / 'plug-logs'
-
-# Contains the repositories cloned by each plugin, categorized by plugin id
-plug_repos = root / 'plug-repos'
+code_core = root / src_core_name  # Code for the core
+code_plugins = root / src_plugins_name  # Downloaded plugin source code
+plugins = root / 'src_plugins'  # Contains the user's downloaded plugins (cloned from github)
+plug_res = root / plug_res_name  # Contains the resources for each plugin, categorized by plugin id
+plug_logs = root / 'plug-logs'  # Contains the logs output by each plugin, categorized by plugin id
+plug_repos = root / plug_repos_name  # Contains the repositories cloned by each plugin, categorized by plugin id
+scripts = root / 'scripts'  # User project scripts to run
+tmp = root / tmp_name  # Temporary files
 
 # Image outputs are divied up into 'sessions'
 # Session logic can be customized in different ways:
@@ -54,7 +46,10 @@ plugin_suffixes = ['_plugin']
 video_exts = ['.mp4', '.mov', '.avi', '.mkv']
 image_exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
 audio_exts = ['.wav', '.mp3', '.ogg', '.flac', '.aac']
+text_exts = ['.py', '.txt', '.md', '.json', '.xml', '.html', '.css', '.js', '.csv', '.tsv', '.yml', '.yaml', '.ini']
 
+audio_ext = '.ogg'
+audio_codec = 'libopus'
 leadnum_zpad = 8
 
 
@@ -141,14 +136,16 @@ def get_leadnum_zpad(path=None):
     biggest = 0
     smallest = math.inf
 
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            if os.path.splitext(file)[1] in image_exts:
-                match = re.match(r"^(\d+)", file)
-                if match is not None:
-                    num = match.group(1)
-                    biggest = max(biggest, len(num))
-                    smallest = min(smallest, len(num))
+
+    for file in Path(path).iterdir():
+        if file.suffix in image_exts:
+            match = re.match(r"^(\d+)\.", file.name)
+            if match is not None:
+                num = match.group(1)
+                size = len(num)
+                print(size, smallest, biggest, file)
+                biggest = max(biggest, size)
+                smallest = min(smallest, size)
 
     if smallest != biggest:
         return smallest
@@ -191,7 +188,7 @@ def get_leadnum(path=None):
     biggest = 0
     for parent, dirs, files in os.walk(path):
         for file in files:
-            stem,suffix = os.path.splitext(file)
+            stem, suffix = os.path.splitext(file)
             if suffix in image_exts:
                 try:
                     num = int(stem)
@@ -236,7 +233,7 @@ def get_image_glob(path):
 
 # endregion
 
-def get_first_match(path, suffix, name = None):
+def get_first_match(path, suffix, name=None):
     path = Path(path)
     if not path.exists():
         return None
@@ -259,7 +256,7 @@ def parse_action_script(s, default=None):
     script:action
     """
     if s is None:
-        return None, default
+        return default, None
 
     v = s.split(':')
 

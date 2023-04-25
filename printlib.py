@@ -117,20 +117,29 @@ def make_printerr(module_name):
 
     return ret
 
+indent = 0
 
 @contextmanager
 def trace(name) -> float:
+    global indent
+
     start = perf_counter()
+    indent += 1
     yield lambda: perf_counter() - start
+    indent -= 1
 
     seconds = perf_counter() - start
+    if (seconds * 1000) < 2:
+        return
     if seconds >= 1:
         s = f'({seconds:.3f}s) {name}'
     else:
         s = f'({int(seconds * 1000)}ms) {name}'
     from yachalk import chalk
     if print_trace:
+        s = '..' * indent + s
         print(chalk.grey(s))
+
 
 
 @contextmanager
@@ -150,8 +159,10 @@ def gputrace(name, vram_dt=False) -> float:
 
 
 @contextmanager
-def cpuprofile(enable=True) -> float:
+def cputrace(name, enable=True, enable_trace=False) -> float:
     if not enable:
+        if enable_trace:
+            trace(name)
         yield None
         return
 
@@ -176,7 +187,7 @@ def cpuprofile(enable=True) -> float:
 
 
 def trace_decorator(func):
-    def wrapper(*args, **kwargs):
+    def _trace_wrapper(*args, **kwargs):
         s_kargs = []
         for a in args:
             s_kargs.append(value_to_print_str(a))
@@ -192,7 +203,7 @@ def trace_decorator(func):
         with trace(f'{func.__name__}({s})'):
             return func(*args, **kwargs)
 
-    return wrapper
+    return _trace_wrapper
 
 
 def value_to_print_str(v):

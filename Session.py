@@ -15,12 +15,12 @@ from tqdm import tqdm
 
 import jargs
 from src_plugins.disco_party.maths import clamp
-from . import paths
-from .convert import cv2pil, load_json, load_pil, save_json, save_png
+from . import convert, paths
+from .convert import cv2pil, load_cv2, load_json, load_pil, save_json, save_png
 from .JobInfo import JobInfo
 from .logs import logsession, logsession_err
 from .paths import get_leadnum, get_leadnum_zpad, get_max_leadnum, get_min_leadnum, get_next_leadnum, get_script_file_path, is_leadnum_zpadded, leadnum_zpad, parse_action_script, parse_frames, sessions
-from .printlib import cpuprofile, printerr, trace
+from .printlib import cputrace, printerr, trace, trace_decorator
 from ..lib.corelib import shlexproc
 
 
@@ -44,7 +44,7 @@ class Session:
     The session also tracks a context data.
     """
 
-    def __init__(self, name_or_abspath, load=True, fixpad=False, log=True):
+    def __init__(self, name_or_abspath=None, load=True, fixpad=False, log=True):
         self.jobs = []
         self.args = dict()
         self.data = Munch()
@@ -56,12 +56,9 @@ class Session:
 
         # Context properties
         self.prompt = ''
-        self.width = None
-        self.height = None
         self.file = None
         self.fps = 24
-        self._image = None
-        self._image_cv2 = None
+        self._img = None
 
         # Directory properties, cached for performance
         self.f = 1
@@ -89,7 +86,7 @@ class Session:
         if self.dirpath.exists():
             if load:
                 import jargs
-                with cpuprofile(jargs.args.trace_session_load):
+                with cputrace('load', jargs.args.profile_session_load):
                     self.load(log=log)
         else:
             if log:
@@ -101,7 +98,7 @@ class Session:
                 self.make_zpad(leadnum_zpad)
 
     def __str__(self):
-        return f"Session({self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file}))"
+        return f"Session({self.name} ({self.w}x{self.h}) at {self.dirpath} ({self.file}))"
 
 
     def exists(self):
@@ -142,12 +139,12 @@ class Session:
         if not self.dirpath.exists():
             return
 
-        self.suffix = self.det_suffix()
         lo, hi = get_leadnum(self.dirpath)
         self.f_first = lo or 0
         self.f_last = hi or 0
         self.f_exists = False
 
+        self.suffix = self.det_suffix()
         self.f_first_path = self.det_frame_path(self.f_first) or 0
         self.f_last_path = self.det_frame_path(self.f_last) or 0
         self.f_path = self.f_last_path
@@ -162,7 +159,7 @@ class Session:
             if not any(self.dirpath.iterdir()):
                 logsession(f"Loaded session {self.name} at {self.dirpath}")
             else:
-                logsession(f"Loaded session {self.name} ({self.width}x{self.height}) at {self.dirpath} ({self.file})")
+                logsession(f"Loaded session {self.name} ({self.w}x{self.h}) at {self.dirpath} ({self.file})")
 
     def load_f(self, f=None, *, clamped_load=False):
         with trace("load_f"):
@@ -201,7 +198,7 @@ class Session:
 
             if file.suffix in paths.image_exts:
                 if file.exists():
-                    self.set(file)
+                    self.img = file
                     return True
 
                 return False
@@ -233,16 +230,11 @@ class Session:
             self.f_first = save_num
             self.f_first_path = path
 
-        if self._image_cv2 is not None:
-            self._image = cv2pil(self._image_cv2)
-
         path = Path(path)
-        if isinstance(self._image, Image.Image):
+        if self.img is not None:
             path = path.with_suffix(".png")
             import cv2
-            save_png(self._image, path, with_async=False)
-        else:
-            printerr(f"Cannot save {self._image} to {path}")
+            save_png(self.img, path, with_async=False)
 
         self.file = path.name
 
@@ -314,61 +306,27 @@ class Session:
         return self.f / self.fps
 
     @property
-    def w(self):
-        return self.width
+    def img(self):
+        from .convert import pil2cv
+        return self._img
 
-    @w.setter
-    def w(self, value):
-        self.width = value
+    @img.setter
+    def img(self, value):
+        self._img = convert.load_cv2(value)
+        # value = cv2.resize(value, (self.w, self.h))
+
+    @property
+    def w(self):
+        if self._img is None:
+            return 0
+        return self.img.shape[1]
 
     @property
     def h(self):
-        return self.height
+        if self._img is None:
+            return 0
+        return self.img.shape[0]
 
-    @h.setter
-    def h(self, value):
-        self.height = value
-
-    @property
-    def image(self):
-        if self._image_cv2 is not None:
-            self._image = Image.fromarray(self._image_cv2)
-        return self._image
-
-    @property
-    def image_cv2(self):
-        from .convert import pil2cv
-        if self._image_cv2 is None:
-            self._image_cv2 = pil2cv(self._image)
-            self._image = None
-        return self._image_cv2
-
-    @image.setter
-    def image(self, value):
-        # If it's a string or path, load it
-        if isinstance(value, (str, Path)):
-            value = Image.open(value)
-
-            # Resize to fit
-            if self.width and self.height:
-                value = value.resize((self.width, self.height))
-
-        self._image = value
-        self._image_cv2 = None
-
-    @image_cv2.setter
-    def image_cv2(self, value):
-        # If it's a string or path, load it
-        if isinstance(value, (str, Path)):
-            import cv2
-            value = cv2.imread(str(value))
-
-            # resize to fit
-            if self.width and self.height:
-                value = cv2.resize(value, (self.width, self.height))
-
-        self._image_cv2 = value
-        self._image = None
 
     def get_frame_name(self, f):
         return str(f).zfill(8) + self.suffix
@@ -396,11 +354,14 @@ class Session:
 
     def det_suffix(self, f=None):
         if f is None:
-            return self.det_suffix(self.f_first) \
-                or self.det_suffix(self.f_last) \
+            return self.det_suffix(self.f_last) \
+                or self.det_suffix(self.f_first) \
                 or self.det_suffix(1)
 
-        return self.det_frame_path(f).suffix
+        fpath = self.det_frame_path(f)
+        if fpath.exists():
+            return fpath.suffix
+        return '.png'
 
     def det_frame_pil(self, f, subdir=''):
         return load_pil(self.det_frame_path(f, subdir))
@@ -417,43 +378,32 @@ class Session:
     def det_f_last_path(self):
         return self.det_frame_path(get_max_leadnum(self.dirpath))
 
-    def set(self, dat):
-        from PIL import ImageFile
-        ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-        if dat is None:
-            return
-
-        # Image output is moved into the context
-        with trace(f"session.set({dat.shape if isinstance(dat, np.ndarray) else dat})"):
-            if isinstance(dat, Image.Image):
-                self._image = dat
-                self._image_cv2 = None
-            elif isinstance(dat, str) or isinstance(dat, Path):
-                if paths.exists(dat):
-                    import cv2
-                    self._image_cv2 = cv2.imread(dat.as_posix())
-                    if self._image_cv2 is not None:
-                        self._image_cv2 = self._image_cv2[..., ::-1]
-                    # self._image = Image.open(dat)
-                    # self.file = dat
-            elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
-                printerr("Multiple images in set_image data, using first")
-                self._image = dat[0]
-            elif isinstance(dat, np.ndarray):
-                self._image_cv2 = dat
-
-        if self._image:
-            # Set width and height from image if not set
-            if not self.width: self.width = self._image.width
-            if not self.height: self.height = self._image.height
-
-            # Resize image to match context size
-            # if self._image and (self.width != self._image.width or self.height != self._image.height):
-            #     self._image = self._image.resize((self.width, self.height), Image.BICUBIC)
-            #
-            # if self._image.mode != "RGB":
-            #     self._image = self._image.convert("RGB")
+    # def set(self, dat):
+    #     from PIL import ImageFile
+    #     ImageFile.LOAD_TRUNCATED_IMAGES = True
+    #
+    #     if dat is None:
+    #         return
+    #
+    #     # Image output is moved into the context
+    #     with trace(f"session.set({dat.shape if isinstance(dat, np.ndarray) else dat})"):
+    #         self.img =
+    #         if isinstance(dat, Image.Image):
+    #             self._image = dat
+    #             self._image_cv2 = None
+    #         elif isinstance(dat, str) or isinstance(dat, Path):
+    #             if paths.exists(dat):
+    #                 import cv2
+    #                 self._image_cv2 = cv2.imread(dat.as_posix())
+    #                 if self._image_cv2 is not None:
+    #                     self._image_cv2 = self._image_cv2[..., ::-1]
+    #                 # self._image = Image.open(dat)
+    #                 # self.file = dat
+    #         elif isinstance(dat, list) and isinstance(dat[0], Image.Image):
+    #             printerr("Multiple images in set_image data, using first")
+    #             self._image = dat[0]
+    #         elif isinstance(dat, np.ndarray):
+    #             self._image_cv2 = dat
 
     def set_frame_data(self, key, v):
         f = self.f - 1
@@ -557,12 +507,43 @@ class Session:
         if subpath.is_absolute():
             return subpath
 
+        if isinstance(ext, (list, tuple)):
+            # Try each extension until we find one that exists
+            for e in ext:
+                p = self.res(subpath, ext=e)
+                if p.exists():
+                    return p
+            return None
+
         if subpath.suffix == '' and ext:
             subpath = subpath.with_suffix('.' + ext)
 
-        return self.dirpath / subpath
+        ret = self.dirpath / subpath
+        if not ret.exists():
+            ret2 = self.dirpath.parent / subpath
+            if ret2.exists():
+                return ret2
+        return ret
 
-    def res_frame(self, resid, subdir='', ext=None, loop=False) -> Path | None:
+    @trace_decorator
+    def res_cv2(self, subpath: Path | str, *, ext: str = None, mode=None) -> np.ndarray:
+        """
+        Get a session resource, e.g. init video
+        """
+        if not isinstance(subpath, (Path, str)):
+            return convert.load_cv2(subpath)
+
+        p = self.res(subpath, ext=ext or ('jpg', 'png'))
+        if p.exists():
+            im = convert.load_cv2(p)
+            if im is not None:
+                if mode == 'fit':
+                    im = convert.fit(im, self.w, self.h, 'black')
+            return im
+        else:
+            return None
+
+    def res_frame(self, resid, framenum=None, subdir='', ext=None, loop=False) -> Path | None:
         """
         Get a session resource, and automatically fetch a frame from it.
         Usage:
@@ -572,7 +553,6 @@ class Session:
         resid='video' # Get the current session frame from video.mp4
         resid=3 # Get frame 3 from the current session
         """
-
         # If the resid is a number, assume it is a frame number
         if isinstance(resid, int):
             return self.det_frame_path(resid)
@@ -583,7 +563,7 @@ class Session:
         nameparts = resid.split(':')
         file = Path(nameparts[0])  # The name of the resource with or without extension
         stem = Path(file.stem)  # The name of the resource with or without extension
-        frame = self.f
+        frame = framenum or self.f
         if len(nameparts) > 1:
             frame = int(nameparts[-1])
 
@@ -592,32 +572,37 @@ class Session:
             if not stem.suffix in paths.video_exts:
                 return stem
 
+        # File exists and is a video
+        # if isinstance(resid, str) and self.res(resid, ext='mp4').exists():
+        #     self.extract_frames(resid)
+
         # Iterate dir and find the matching file, regardless of the extension
         framedir = self.res(stem / subdir)
-        # if not framedir.is_dir():
-        #     self.extract_frames()
+        if not framedir.is_dir():
+            self.extract_frames(stem)
 
         l = list(framedir.iterdir())
         if loop:
             frame = frame % len(l)
 
         framestr = str(frame)
-        for file in l:
-            if file.stem.lstrip('0') == framestr:
-                if ext is None or file.suffix.lstrip('.') == ext.lstrip('.'):
-                    return file
+        return self.res(stem / f"{framestr.zfill(paths.leadnum_zpad)}.jpg")
+        # for file in l:
+        #     if file.stem.lstrip('0') == framestr:
+        #         if ext is None or file.suffix.lstrip('.') == ext.lstrip('.'):
+        #             return file
+        #
+        # return None
 
-        return None
-
-    def res_frame_cv2(self, resid, subdir='', ext=None, loop=False):
-        frame_path = self.res_frame(resid, subdir, ext, loop)
-        if frame_path is None:
-            return None
+    def res_frame_cv2(self, resid, framenum=None, subdir='', ext=None, loop=False):
+        frame_path = self.res_frame(resid, framenum, subdir, ext, loop)
+        if frame_path is None or not frame_path.exists():
+            return np.zeros((self.h, self.w, 3), dtype=np.uint8)
 
         # resize to fit
         ret = cv2.imread(str(frame_path))
-        if self.width and self.height:
-            ret = cv2.resize(ret, (self.width, self.height))
+        if ret is not None and self.w and self.h:
+            ret = cv2.resize(ret, (self.w, self.h))
 
         return ret
 
@@ -627,22 +612,34 @@ class Session:
     def res_framepil(self, name, subdir='', ext=None, loop=False, ctxsize=False):
         ret = load_pil(self.res_frame(name, subdir, ext, loop))
         if ctxsize:
-            ret = ret.resize((self.width, self.height))
+            ret = ret.resize((self.w, self.h))
 
         return ret
 
-    def res_music(self, name='music', *, optional=False):
+    def res_music(self, name=None, *, optional=True):
         """
         Get the music resource for this session, or specify by name and auto-detect extension.
         """
-        name = name or 'music'
-        if self.exists:
-            file = self.res(f"{name}.mp3")
-            if not file.exists(): file = self.res(f"{name}.ogg")
-            if not file.exists(): file = self.res(f"{name}.wav")
-            if not file.exists(): file = self.res(f"{name}.flac")
-            if not file.exists() and not optional: raise FileNotFoundError("Could not find music file in session directory")
-            return file
+        def _res_music(name, optional):
+            name = name or 'music'
+            if self.exists:
+                file = self.res(f"{name}.mp3")
+                if not file.exists(): file = self.res(f"{name}.ogg")
+                if not file.exists(): file = self.res(f"{name}.wav")
+                if not file.exists(): file = self.res(f"{name}.flac")
+                if not file.exists() and not optional: raise FileNotFoundError("Could not find music file in session directory")
+                return file
+
+        if name:
+            return _res_music(name, optional)
+        else:
+            v = _res_music('music', True)
+            if not v.exists():
+                v2 = _res_music('init', True)
+                if v2.exists(): return v2
+            if not optional:
+                raise FileNotFoundError("Could not find music file in session directory")
+            return v
 
     def res_script(self, name='script', touch=False):
         """
@@ -726,8 +723,9 @@ class Session:
                 pass
 
     def extract_init(self, name='init'):
-        self.extract_frames(name)
-        self.extract_music(name)
+        frame_path = self.extract_frames(name)
+        music_path = self.extract_music(name)
+        return frame_path, music_path
 
     def extract_music(self, src='init', overwrite=False):
         input = self.res(src, ext="mp4")
@@ -752,7 +750,7 @@ class Session:
         else:
             vf = f'select=not(mod(n\,{nth_frame}))'
 
-        vf, w, h = vf_rescale(vf, w, h, self.width, self.height)
+        vf, w, h = vf_rescale(vf, self.w, self.h, self.w, self.h)
 
         if src.exists():
             dst = self.res(name)
@@ -827,7 +825,7 @@ class Session:
         framecount = self.f_last
 
         vf = vf_fade(vf, fade_in, fade_out, framecount, fps)
-        vf, w, h = vf_rescale(vf, w, h, self.width, self.height)
+        vf, w, h = vf_rescale(vf, w, h, self.w, self.h)
 
         print(f"Making video at {w}x{h}")
 
@@ -847,7 +845,7 @@ class Session:
         # ----------------------------------------
         out = self.dirpath / f'{name}.mp4'
         pattern = self.dirpath / pattern_with_zeroes
-        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', *bv, *ba, out.as_posix(), '-nostats']
+        args = ['ffmpeg', '-y', *musicargs, '-r', str(fps), *frameargs1, '-i', pattern.as_posix(), *frameargs2, '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', *bv, *ba, out.as_posix()]
 
         print('')
         print(' '.join(args))
@@ -1016,6 +1014,16 @@ class Session:
         #
         return lo, hi, name
 
+
+    def framerange(self):
+        from jargs import args
+        if args.frames:
+            ranges = args.frames.split('-')
+            for r in ranges:
+                yield r
+        else:
+            yield self.f_first, self.f_last
+
     def run0(self, jquery, fg=True, **kwargs):
         if self._image is None:
             self.run(jquery, fg=fg, **kwargs)
@@ -1030,7 +1038,7 @@ class Session:
         if self.disable_jobs:
             return
 
-        with cpuprofile(jargs.args.trace_session_run):
+        with cputrace('Session.run', jargs.args.profile_session_run):
             ifo = plugins.get_job(jquery)
             if ifo is None:
                 logsession_err(f"Job {jquery} not found!")
@@ -1051,8 +1059,8 @@ class Session:
 
             # Store the prompt into ctx data
             if j.args.prompt: self.prompt = j.args.prompt
-            if j.args.w: self.width = j.args.w
-            if j.args.h: self.height = j.args.h
+            if j.args.w: self.w = j.args.w
+            if j.args.h: self.h = j.args.h
 
             self.add_kwargs(ifo, plugins.get_args(jquery, kwargs, True))
             self.jobs.append(j)
@@ -1065,12 +1073,12 @@ class Session:
 
         if fg:
             # logcore(f"{chalk.blue(j.jid)}(...)")
-            with cpuprofile(jargs.args.trace_run_job):
+            with cputrace('Session.run', jargs.args.profile_run_job):
                 ret = jobs.run(j)
 
             self.jobs.remove(j)
 
-            if userconf.print_jobs:
+            if userconf.print_frames:
                 jargs = j.args
                 jargs_str = {k: v for k, v in jargs.__dict__.items() if isinstance(v, (int, float, str))}
                 jargs_str = ' '.join([f'{chalk.green(k)}={chalk.white(printlib.str(v))}' for k, v in jargs_str.items()])
